@@ -1,3 +1,4 @@
+/// <reference types="vitest" />
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { crx } from '@crxjs/vite-plugin'
@@ -14,5 +15,10 @@ export default defineConfig({
         popup: 'src/popup/index.html',
       },
     },
+  },
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    include: ['__tests__/**/*.test.{ts,tsx}'],
   },
 })
