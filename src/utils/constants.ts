@@ -58,7 +58,7 @@ export const MAX_SPEECH_RATE = 1.5
 
 // DOM extraction
 export const MAX_VISIBLE_TEXT_CHARS = 2_000
-export const MAX_ELEMENTS = 30
+export const MAX_ELEMENTS = 100
 
 // Command history
 export const MAX_HISTORY_ENTRIES = 20
