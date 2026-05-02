@@ -5,7 +5,7 @@ export const AI_HARD_TIMEOUT_MS = 15_000
 
 // Voice
 export const WAKE_WORD = 'hey vora'
-export const MIN_CONFIDENCE = 0.7
+export const MIN_CONFIDENCE = 0.4
 export const CONFIRMATION_TIMEOUT_MS = 5_000
 export const DEFAULT_SPEECH_RATE = 1.0
 export const MIN_SPEECH_RATE = 0.5

@@ -53,7 +53,7 @@ Return a single JSON object — no prose, no markdown, no code fences:
 
 ## Rules
 - Only use selectors from the provided element list. Never invent selectors.
-- For NAVIGATE, only use URLs from the element list or spoken explicitly by the user.
+- For NAVIGATE, use URLs from the element list, URLs spoken explicitly by the user, or construct https://<domain>.com when the user says "open [site]" or "go to [site]" and the site is a well-known service (e.g. "open discord" → https://discord.com).
 - Never fill fields labelled: password, PIN, SSN, social security, credit card, CVV, CVC. Return UNKNOWN with reason "I cannot fill that field for your security."
 - If the command could mean multiple things, pick the most likely interpretation given the page context.
 - Prefer FILL_INPUT + PRESS_KEY(Enter) over SUBMIT_FORM for search boxes.
