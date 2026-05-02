@@ -1,0 +1,6 @@
+{
+  "name": "Security Scan",
+  "description": "Manual full-project security audit. Run before releases or after touching auth, payments, or data handling code.",
+  "trigger": "onManual",
+  "instructions": "Perform a full security scan across src/, checking every file for the following:\n\n**Critical (BLOCKER)**\n- Hardcoded API keys, tokens, passwords, or secrets\n- Routes that modify data without verifying the authenticated user owns that data\n- User input passed unsanitized to shell commands, file system operations, or database queries\n- Webhook handlers missing signature verification\n- Sensitive internal errors returned directly to the client\n\n**High (WARNING)**\n- console.log statements that may leak sensitive user data\n- Missing input validation on any external-facing API route\n- Environment variables accessed without handling missing values\n- Overly permissive CORS settings\n\n**Medium (SUGGESTION)**\n- API routes with no rate limiting consideration\n- Sensitive operations with no audit logging\n- Third-party libraries with known vulnerabilities (check package.json names)\n\nFor each issue: file path, approximate line, severity, and a one-line description of the fix. End with a total count by severity."
+}

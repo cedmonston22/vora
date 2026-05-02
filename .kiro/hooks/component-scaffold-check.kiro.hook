@@ -1,0 +1,7 @@
+{
+  "name": "Component Scaffold Check",
+  "description": "When a new component file is created, validate it follows project conventions and generate a stub test file.",
+  "trigger": "onCreate",
+  "pattern": "src/components/**/*.tsx",
+  "instructions": "A new component file was just created. Do the following:\n\n1. Verify it has a named Props type defined above the component\n2. Verify the export is a named function, not a default arrow function\n3. Check imports follow the project's established import order from code-standards.md\n4. Flag if 'use client' is present and note whether it appears necessary\n5. Create a stub test file in the mirrored __tests__/unit/components/ path with:\n   - The component imported\n   - One describe block named after the component\n   - One placeholder test: it('renders without crashing', ...)\n   - Comments noting which user behaviors should be tested\n\nReport what you found and what you created."
+}

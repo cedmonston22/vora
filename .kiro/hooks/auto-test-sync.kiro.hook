@@ -1,0 +1,8 @@
+{
+  "name": "Auto Test Sync",
+  "description": "When a source file is saved, create or update its corresponding test file to reflect current logic.",
+  "trigger": "onSave",
+  "pattern": "src/**/*.{ts,tsx}",
+  "excludePattern": "**/*.test.{ts,tsx}",
+  "instructions": "A source file was just saved. Check if a corresponding test file exists in __tests__/. If it does not exist, create one with a describe block and placeholder tests noting which behaviors need coverage. If it does exist, review the saved file for any new functions, hooks, or components that lack test coverage and add test cases for them. Use the project's established testing libraries (check package.json if unsure). Test user-facing behavior, not implementation details. Never delete existing passing tests. After updating, briefly list what changed."
+}

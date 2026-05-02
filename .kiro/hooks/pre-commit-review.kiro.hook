@@ -1,0 +1,6 @@
+{
+  "name": "Pre-Commit Review",
+  "description": "Manual hook. Run before every git commit to catch security issues, code quality problems, and missing test coverage.",
+  "trigger": "onManual",
+  "instructions": "Review all recently modified files and produce a structured report. Check for the following:\n\n**Security (BLOCKER)**\n- Hardcoded secrets, API keys, tokens, or credentials anywhere in code\n- User-controlled input passed directly to shell commands, database queries, or file paths\n- API routes that perform write operations without checking authentication\n- Sensitive data logged or returned in error responses\n\n**Code Quality (WARNING)**\n- console.log statements that should be removed\n- TypeScript `any` types that should be narrowed\n- Async functions missing error handling\n- Components doing more than one thing\n- TODOs without a linked issue number\n\n**Consistency (WARNING)**\n- Naming conventions not matching .kiro/steering/structure.md\n- Import order violations\n- Magic numbers or hardcoded UI copy strings\n\n**Testing (SUGGESTION)**\n- New functions or components without any test coverage\n- Test files not updated after logic changes\n\nGroup findings by file. Label each finding BLOCKER, WARNING, or SUGGESTION. End with a one-line summary: total counts by severity and PASS (no blockers) or FAIL."
+}
