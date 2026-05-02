@@ -1,7 +1,0 @@
-{
-  "name": "API Doc Sync",
-  "description": "When an API route file is saved, update docs/api.md with the current route's method, path, request/response shape, and auth requirement.",
-  "trigger": "onSave",
-  "pattern": "src/app/api/**/*.ts",
-  "instructions": "An API route file was just saved. Open or create docs/api.md. Find the section for this route (create it if it doesn't exist, using the file path as the heading). Update it to reflect:\n- HTTP method\n- URL path\n- Request body shape (inferred from the schema validation in the file)\n- Response shape for both success and error cases\n- Whether the route requires authentication\n\nKeep documentation concise. Use markdown tables for request/response shapes. Do not expose internal implementation details."
-}

@@ -1,0 +1,7 @@
+{
+  "name": "Vision Guard",
+  "description": "When core logic is saved, verify the file does not violate Vora's hard constraints from product.md.",
+  "trigger": "onSave",
+  "pattern": "src/{voice,content,ai}/**/*.ts",
+  "instructions": "A core logic file was just saved. Check the file against Vora's hard constraints from .kiro/steering/product.md:\n\n1. No voice recording, transcript, or audio data persisted to chrome.storage, IndexedDB, localStorage, or any other persistent layer. Voice data must live only for the duration of a single command.\n2. No page DOM content or page context cached across commands. Each command must read the page fresh.\n3. Any destructive action path (delete, submit, send, pay, archive, post, publish) must route through a TTS confirmation gate before execution. Flag direct execution paths.\n4. Ambiguous or unparseable AI responses must route to a TTS error message. Flag any code that guesses an action or falls through silently.\n5. Page context sent to the AI must be sanitized: scripts stripped, inline event handlers removed, sensitive input values (type=password, type=hidden with credentials) excluded.\n\nReport findings as VIOLATION or CLEAR per constraint. End with PASS if all constraints clear, FAIL if any violation. Do not modify the file. Suggest a fix for each violation in one line."
+}
