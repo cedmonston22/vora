@@ -4,36 +4,49 @@
 
 | Layer | Technology | Notes |
 |---|---|---|
-| Frontend | <!-- e.g. Next.js 14 (App Router) --> | |
-| Styling | <!-- e.g. Tailwind CSS --> | |
-| Auth | <!-- e.g. Supabase Auth --> | |
-| Database | <!-- e.g. Postgres via Supabase --> | |
-| Storage | | |
-| Background Jobs | | |
-| Payments | | |
-| Deployment | | |
+| Extension Framework | Chrome Extension Manifest V3 | Service workers, content scripts, popup |
+| Popup UI | React 18 + TypeScript | Only used in popup context |
+| Styling | Tailwind CSS | Popup UI only, not injected into host pages |
+| Voice Input | Web Speech API | Built into Chrome, no external dependency |
+| Voice Output | Web Speech Synthesis API | Built into Chrome, TTS readback |
+| AI / Intent | Anthropic Claude API (claude-sonnet-4-6) | Natural language to browser action |
+| Build Tool | Vite + CRXJS | Bundles extension with HMR support |
+| Type Checking | TypeScript 5 strict mode | Across all contexts |
+| Testing | Vitest | Unit and integration tests |
+| Deployment | Chrome Web Store / Local unpacked | Demo via unpacked load |
 
 ## Package Preferences
 
-<!-- Declare preferred libraries for common needs so Kiro never reaches for the wrong one. -->
+- HTTP client: Native `fetch` only — no axios, no wrappers
+- Form handling: Not applicable — no forms in popup, plain React state
+- State management: React `useState` and `useReducer` in popup — no Zustand, no Redux
+- Testing: Vitest with jsdom for unit tests, no Jest
+- Bundler: Vite with `@crxjs/vite-plugin` for Chrome extension support
+- Type validation: Manual type guards in `actionParser.ts` — no Zod to keep bundle lean
+- Icons: Lucide React in popup only
+- CSS: Tailwind utility classes in popup, raw CSS variables in Shadow DOM overlay
 
-- Date handling: 
-- HTTP client: 
-- Form handling: 
-- State management: 
-- Testing: 
+## Chrome Message Passing Conventions
 
-## API Route Conventions
-
-- Validate all inputs with a schema library before processing
-- Return structured error objects: `{ error: string, code: string }`
-- Never return raw database errors to the client
-- Log full errors server-side with context
+- All messages typed as discriminated unions in `types/commands.ts`
+- Every `sendMessage` call must handle the response and check `chrome.runtime.lastError`
+- Message structure: `{ type: MESSAGE_TYPE, payload: TypedPayload }`
+- Content scripts only receive messages — they never initiate to popup
+- Service worker is the single source of truth for extension state
+- No message should trigger a destructive action without a confirmation payload
 
 ## Environment Variables
 
-All required env vars documented in `.env.example`. Never hardcode values.
+- Claude API key stored in `chrome.storage.local` — never hardcoded, never in source
+- Users input their API key via the Settings panel in the popup on first use
+- Build-time constants (version, model name) defined in `utils/constants.ts`
+- No `.env` file — Chrome extensions have no server-side environment
 
 ## Error Handling Philosophy
 
-<!-- Describe your error handling approach so Kiro is consistent. -->
+- Every error has a category: `VoiceError`, `AIError`, `ExecutionError`, `NetworkError`
+- Errors never surface as raw technical messages to the user — always translated to plain English via TTS
+- Silent failures are not allowed — if something goes wrong, Vora always tells the user out loud
+- Claude API failures fall back to a canned TTS response, never a blank state
+- DOM action failures are caught individually — one failed action does not crash the session
+- All errors logged to console in development, stripped in demo build
