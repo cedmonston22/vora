@@ -61,4 +61,22 @@ describe('buildPrompt', () => {
     expect(user).not.toContain('Welcome')
     expect(user).not.toContain('Some short page text.')
   })
+
+  it('system prompt mentions the merged action types', () => {
+    const { system } = buildPrompt('test', ctx)
+    expect(system).toContain('SELECT_OPTION')
+    expect(system).toContain('PRESS_KEY')
+    expect(system).toContain('CLEAR_INPUT')
+    expect(system).toContain('REPEAT_LAST')
+  })
+
+  it('includes lastReadback in the user prompt when provided', () => {
+    const { user } = buildPrompt('repeat that', ctx, 'I clicked the Submit button.')
+    expect(user).toContain('Last Vora readback: "I clicked the Submit button."')
+  })
+
+  it('omits the lastReadback block when not provided', () => {
+    const { user } = buildPrompt('click submit', ctx)
+    expect(user).not.toContain('Last Vora readback')
+  })
 })

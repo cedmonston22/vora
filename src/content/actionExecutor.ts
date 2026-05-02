@@ -9,6 +9,12 @@ export async function executeAction(action: BrowserAction): Promise<ActionResult
         return clickElement(action, action.selector, action.label)
       case ActionType.FILL_INPUT:
         return fillInput(action, action.selector, action.value, action.label)
+      case ActionType.CLEAR_INPUT:
+        return clearInput(action, action.selector, action.label)
+      case ActionType.SELECT_OPTION:
+        return selectOption(action, action.selector, action.value, action.label)
+      case ActionType.PRESS_KEY:
+        return pressKey(action, action.key, action.selector, action.label)
       case ActionType.SCROLL_DOWN: {
         const dy = action.amount ?? Math.round(window.innerHeight * 0.85)
         window.scrollBy({ top: dy, behavior: 'smooth' })
@@ -29,8 +35,9 @@ export async function executeAction(action: BrowserAction): Promise<ActionResult
         return readContent(action, action.selector)
       case ActionType.FOCUS_ELEMENT:
         return focusElement(action, action.selector, action.label)
-      case ActionType.PRESS_KEY:
-        return pressKey(action, action.key, action.label)
+      case ActionType.REPEAT_LAST:
+        // Handled in the side panel before reaching the content script.
+        return { success: true, action, message: action.message }
       case ActionType.UNKNOWN:
         return { success: false, action, message: action.reason }
     }
@@ -61,9 +68,85 @@ function clickElement(action: BrowserAction, selector: string, label: string): A
   return { success: true, action, message: `Clicked ${label || 'element'}.` }
 }
 
-function pressKey(action: BrowserAction, key: string, label?: string): ActionResult {
-  const target = (document.activeElement as HTMLElement | null) ?? document.body
-  // Map a few common spoken/named forms to KeyboardEvent values.
+function fillInput(
+  action: BrowserAction,
+  selector: string,
+  value: string,
+  label: string,
+): ActionResult {
+  if (isSensitiveField(label)) {
+    return { success: false, action, message: 'I cannot fill that field for your security.' }
+  }
+  const el = pick(selector)
+  if (!el) return missing(action, label)
+  if (!(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement)) {
+    return { success: false, action, message: `I could not fill ${label || 'that field'}.` }
+  }
+  if (el instanceof HTMLInputElement && el.type.toLowerCase() === 'password') {
+    return { success: false, action, message: 'I cannot fill password fields.' }
+  }
+  el.focus()
+  el.value = value
+  el.dispatchEvent(new Event('input', { bubbles: true }))
+  el.dispatchEvent(new Event('change', { bubbles: true }))
+  return { success: true, action, message: `Filled ${label || 'that field'}.` }
+}
+
+function clearInput(action: BrowserAction, selector: string, label: string): ActionResult {
+  const el = pick(selector)
+  if (!el) return missing(action, label)
+  if (!(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement)) {
+    return { success: false, action, message: `I could not clear ${label || 'that field'}.` }
+  }
+  el.focus()
+  el.value = ''
+  el.dispatchEvent(new Event('input', { bubbles: true }))
+  el.dispatchEvent(new Event('change', { bubbles: true }))
+  return { success: true, action, message: `Cleared ${label || 'that field'}.` }
+}
+
+function selectOption(
+  action: BrowserAction,
+  selector: string,
+  value: string,
+  label: string,
+): ActionResult {
+  const el = pick(selector)
+  if (!el) return missing(action, label)
+  if (!(el instanceof HTMLSelectElement)) {
+    return { success: false, action, message: `I could not find the ${label || 'dropdown'}.` }
+  }
+  const opt = Array.from(el.options).find(
+    (o) => o.value === value || o.text.toLowerCase() === value.toLowerCase(),
+  )
+  if (!opt) {
+    return {
+      success: false,
+      action,
+      message: `I could not find option "${value}" in ${label || 'the dropdown'}.`,
+    }
+  }
+  el.value = opt.value
+  el.dispatchEvent(new Event('change', { bubbles: true }))
+  return { success: true, action, message: `Selected ${opt.text} in ${label || 'the dropdown'}.` }
+}
+
+function pressKey(
+  action: BrowserAction,
+  key: string,
+  selector: string | undefined,
+  label: string | undefined,
+): ActionResult {
+  const target = selector
+    ? pick(selector)
+    : ((document.activeElement as HTMLElement | null) ?? document.body)
+  if (!target || !(target instanceof HTMLElement)) {
+    return {
+      success: false,
+      action,
+      message: `I could not find an element to press ${key} on.`,
+    }
+  }
   const normalized = normalizeKey(key)
   const code = guessCode(normalized)
   for (const type of ['keydown', 'keypress', 'keyup'] as const) {
@@ -75,6 +158,10 @@ function pressKey(action: BrowserAction, key: string, label?: string): ActionRes
         cancelable: true,
       }),
     )
+  }
+  if (normalized === 'Enter' && target instanceof HTMLInputElement) {
+    const form = target.closest('form')
+    if (form) form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
   }
   return { success: true, action, message: label ? `${label}.` : `Pressed ${normalized}.` }
 }
@@ -106,30 +193,6 @@ function guessCode(normalized: string): string {
   if (normalized === 'ArrowDown') return 'ArrowDown'
   if (normalized.length === 1) return `Key${normalized.toUpperCase()}`
   return normalized
-}
-
-function fillInput(
-  action: BrowserAction,
-  selector: string,
-  value: string,
-  label: string,
-): ActionResult {
-  if (isSensitiveField(label)) {
-    return { success: false, action, message: 'I cannot fill that field for your security.' }
-  }
-  const el = pick(selector)
-  if (!el) return missing(action, label)
-  if (!(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement)) {
-    return { success: false, action, message: `I could not fill ${label || 'that field'}.` }
-  }
-  if (el instanceof HTMLInputElement && el.type.toLowerCase() === 'password') {
-    return { success: false, action, message: 'I cannot fill password fields.' }
-  }
-  el.focus()
-  el.value = value
-  el.dispatchEvent(new Event('input', { bubbles: true }))
-  el.dispatchEvent(new Event('change', { bubbles: true }))
-  return { success: true, action, message: `Filled ${label || 'that field'}.` }
 }
 
 function scrollToElement(action: BrowserAction, selector: string, label: string): ActionResult {

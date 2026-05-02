@@ -26,14 +26,16 @@ This document defines how Kiro agents should behave when generating, modifying, 
 - Handles only capture and synthesis — no intent parsing, no action logic
 - `speechRecognition.ts` captures raw text and passes it upstream — it must not interpret or filter commands
 - `speechSynthesis.ts` handles readback only — it must not trigger any browser actions
+- `speak()` accepts either a plain rate number (backward-compatible) or a full `SpeakOptions` object `{ rate, volume, voiceName, locale }` — always pass the full settings object from `App.tsx` call sites
 
 ### AI Layer (`src/ai/`)
 - `claudeClient.ts` is the sole entry point for all Claude API calls — agents must never create additional API clients
-- `promptBuilder.ts` builds context-aware prompts — when modifying, always include page context and user intent, never include raw voice audio data
-- `actionParser.ts` converts Claude responses into typed `BrowserAction` objects — output must always conform to `src/types/actions.ts`, never use freeform strings
+- `promptBuilder.ts` builds context-aware prompts — when modifying, always include page context and user intent, never include raw voice audio data; pass `lastReadback` as the third argument when available so Claude can handle "repeat that" commands
+- `actionParser.ts` converts Claude responses into typed `BrowserAction` objects — output must always conform to `src/types/actions.ts`, never use freeform strings; `REPEAT_LAST` is a valid action type and must be handled
 
 ### Action Execution (`src/content/actionExecutor.ts`)
 - Before executing any action, validate it against the `BrowserAction` type
+- `REPEAT_LAST` actions are intercepted and handled in `App.tsx` before reaching the content script — never send them to the executor
 - Destructive actions (`SUBMIT_FORM`, `DELETE_ELEMENT`, `SEND_MESSAGE`) require a confirmation step — never remove or bypass this flow
 - If an action cannot be validated or matched to a DOM element, surface an error via TTS — never guess or silently fail
 
@@ -44,6 +46,7 @@ This document defines how Kiro agents should behave when generating, modifying, 
 ### Popup UI (`src/popup/`)
 - React is allowed here only — never port popup patterns to content scripts
 - Components must remain single-responsibility — `ActivationButton` handles activation only, `StatusIndicator` displays state only
+- `SettingsPanel` manages API key, language/locale, voice selection, speech rate, and volume — exports `VoiceSettings` type used by `App.tsx`
 - Hooks in `src/popup/hooks/` manage state only — no direct Chrome API calls from hooks, route those through the background service worker
 
 ### Background Service Worker (`src/background/service-worker.ts`)

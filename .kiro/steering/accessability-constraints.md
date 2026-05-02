@@ -28,9 +28,13 @@ Never require typed confirmation — voice only.
 - Every state change must have a corresponding TTS message — no silent transitions
 - TTS must be audible before the next recognition session starts — never overlap
 - TTS speech rate must default to 1.0x — configurable in settings between 0.5x and 1.5x
+- TTS volume must default to 100% — configurable in settings between 0% and 100%
+- TTS voice must default to the system default — user can select any available system voice in Settings
+- TTS locale must default to `en-US` — user can select any available locale in Settings; changing locale resets the voice selection
 - TTS must use a clear, natural voice — default to the best available system voice
 - Error messages must be in plain English — never read out error codes, selectors, or technical strings
 - TTS must read page content in logical reading order — not DOM order if they differ
+- "Repeat that", "say that again", and "what did you say" must re-speak the last TTS readback without re-executing any action
 
 ## Visual Requirements
 

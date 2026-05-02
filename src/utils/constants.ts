@@ -66,6 +66,15 @@ export const MAX_HISTORY_ENTRIES = 20
 // Storage keys
 export const STORAGE_KEY_API_KEY = 'vora_api_key'
 export const STORAGE_KEY_SPEECH_RATE = 'vora_speech_rate'
+export const STORAGE_KEY_SPEECH_VOLUME = 'vora_speech_volume'
+export const STORAGE_KEY_SPEECH_VOICE = 'vora_speech_voice'
+export const STORAGE_KEY_SPEECH_LOCALE = 'vora_speech_locale'
+
+// Voice defaults
+export const DEFAULT_SPEECH_VOLUME = 1.0
+export const MIN_SPEECH_VOLUME = 0.0
+export const MAX_SPEECH_VOLUME = 1.0
+export const DEFAULT_SPEECH_LOCALE = 'en-US'
 
 // Destructive action keywords — if a clickable element's label contains these, require confirmation
 export const DESTRUCTIVE_KEYWORDS = [

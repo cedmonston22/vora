@@ -58,7 +58,7 @@ Files: `App.tsx`, `components/`, `hooks/`, `popup.css`, `index.html`, `index.tsx
 - [ ] `StatusIndicator.tsx` — displays current state with visual feedback (idle/listening/thinking/done)
 - [ ] `ActivationButton.tsx` — mic toggle, sends activate/deactivate message to service worker
 - [ ] `CommandHistory.tsx` — scrollable list of recent commands and their outcomes
-- [ ] `SettingsPanel.tsx` — API key input (saved to `chrome.storage.local`), voice speed preference
+- [ ] `SettingsPanel.tsx` — API key input (saved to `chrome.storage.local`), language/locale selector, voice selector (filtered by locale), speech rate slider, volume slider
 - [ ] `App.tsx` — root layout, wire all components together
 
 ---
@@ -79,6 +79,14 @@ Files: `App.tsx`, `components/`, `hooks/`, `popup.css`, `index.html`, `index.tsx
 - Wake word "Hey Vora" is not implemented. Activation is a click on the mic in the side panel. The voice-ai-flow steering doc has been updated to reflect this and notes wake word as future work.
 - The runtime state machine lives in the side panel React app, not in the service worker, because Web Speech APIs require a window context.
 - The in-page side panel shifts host body margin-right by 340px. Sites with fixed-position elements on the right or `body { overflow: hidden }` may not visually shift.
+
+## Shipped Accessibility Features
+
+- [x] Voice selection — user can pick any available system voice, filtered by locale
+- [x] Volume control — 0–100%, persisted to chrome.storage.local
+- [x] Language/locale selection — BCP-47 locale dropdown, resets voice on change
+- [x] Speech rate control — 0.5x–1.5x, persisted to chrome.storage.local
+- [x] "Repeat that" command — re-speaks last TTS readback without re-executing any action; handled via REPEAT_LAST action type and lastReadback ref in App.tsx
 
 ---
 

@@ -6,6 +6,7 @@
 2. In Chrome, open `chrome://extensions` → toggle **Developer mode** ON → click **Load unpacked** → select the `dist/` directory.
 3. Click the Vora icon in the toolbar — the **side panel** opens on the right edge of the browser. It stays pinned across tab switches.
 4. In the side panel, click **Settings** at the bottom → paste your Anthropic API key → **Save key**.
+   - Optionally: set your preferred **Language**, **Voice**, **Speech rate**, and **Volume** in the same panel.
 5. Open `chrome://settings/content/microphone` and confirm the `chrome-extension://…` entry for Vora is set to **Allow**.
 
 ## Demo Flow (~2 min)
@@ -37,7 +38,13 @@
 - Expected: Vora speaks aloud — *"I am about to click Delete. Say yes to confirm or no to cancel."*
 - Reply: **"Yes"** to delete, **"No"** to cancel. Stays in confirming state for up to 5 seconds.
 
-### 5. Error handling
+### 5. "Repeat that"
+
+- After any successful command, say:
+  > "Repeat that" (or "say that again" / "what did you say")
+- Expected: Vora re-speaks the last TTS readback without re-executing any action. Useful when the user missed what was said.
+
+### 6. Error handling
 
 - Say something ambiguous:
   > "Do the thing"

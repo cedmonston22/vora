@@ -56,6 +56,32 @@ function parseBrowserAction(raw: unknown): BrowserAction {
       }
       return { type: ActionType.FILL_INPUT, selector, value, label }
     }
+    case ActionType.CLEAR_INPUT: {
+      const selector = stringField(raw, 'selector')
+      const label = stringField(raw, 'label') ?? ''
+      if (!selector) return unknown('Clear action missing a selector.')
+      return { type: ActionType.CLEAR_INPUT, selector, label }
+    }
+    case ActionType.SELECT_OPTION: {
+      const selector = stringField(raw, 'selector')
+      const value = stringField(raw, 'value') ?? ''
+      const label = stringField(raw, 'label') ?? ''
+      if (!selector) return unknown('Select action missing a selector.')
+      return { type: ActionType.SELECT_OPTION, selector, value, label }
+    }
+    case ActionType.PRESS_KEY: {
+      const key = stringField(raw, 'key')
+      if (!key) return unknown('Press-key action missing a key.')
+      const selector = stringField(raw, 'selector')
+      const label = stringField(raw, 'label')
+      const press: { type: ActionType.PRESS_KEY; key: string; selector?: string; label?: string } = {
+        type: ActionType.PRESS_KEY,
+        key,
+      }
+      if (selector !== undefined) press.selector = selector
+      if (label !== undefined) press.label = label
+      return press
+    }
     case ActionType.SCROLL_DOWN: {
       const amount = numberField(raw, 'amount')
       return amount !== undefined
@@ -102,13 +128,9 @@ function parseBrowserAction(raw: unknown): BrowserAction {
       if (!selector) return unknown('Focus action missing a selector.')
       return { type: ActionType.FOCUS_ELEMENT, selector, label }
     }
-    case ActionType.PRESS_KEY: {
-      const key = stringField(raw, 'key')
-      if (!key) return unknown('Press-key action missing a key.')
-      const label = stringField(raw, 'label')
-      return label !== undefined
-        ? { type: ActionType.PRESS_KEY, key, label }
-        : { type: ActionType.PRESS_KEY, key }
+    case ActionType.REPEAT_LAST: {
+      const message = stringField(raw, 'message') ?? ''
+      return { type: ActionType.REPEAT_LAST, message }
     }
     case ActionType.UNKNOWN: {
       const reason = stringField(raw, 'reason') ?? 'Unrecognized command.'

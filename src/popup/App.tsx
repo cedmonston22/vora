@@ -3,6 +3,7 @@ import { ActivationButton } from './components/ActivationButton'
 import { StatusIndicator } from './components/StatusIndicator'
 import { CommandHistory } from './components/CommandHistory'
 import { SettingsPanel } from './components/SettingsPanel'
+import type { VoiceSettings } from './components/SettingsPanel'
 import { useCommandHistory } from './hooks/useCommandHistory'
 import { startListening, stopListening } from '../voice/speechRecognition'
 import { speak, cancelSpeech } from '../voice/speechSynthesis'
@@ -11,7 +12,12 @@ import {
   MIN_CONFIDENCE,
   CONFIRMATION_TIMEOUT_MS,
   DEFAULT_SPEECH_RATE,
+  DEFAULT_SPEECH_VOLUME,
+  DEFAULT_SPEECH_LOCALE,
   STORAGE_KEY_SPEECH_RATE,
+  STORAGE_KEY_SPEECH_VOLUME,
+  STORAGE_KEY_SPEECH_VOICE,
+  STORAGE_KEY_SPEECH_LOCALE,
 } from '../utils/constants'
 import { MSG } from '../types/commands'
 import type {
@@ -25,13 +31,13 @@ import { ActionType } from '../types/actions'
 type SessionState = {
   state: ExtensionState
   message: string
-  rate: number
+  settings: VoiceSettings
 }
 
 type Reducer =
   | { type: 'state'; state: ExtensionState; message?: string }
   | { type: 'message'; message: string }
-  | { type: 'rate'; rate: number }
+  | { type: 'settings'; patch: Partial<VoiceSettings> }
 
 function reducer(s: SessionState, a: Reducer): SessionState {
   switch (a.type) {
@@ -39,16 +45,23 @@ function reducer(s: SessionState, a: Reducer): SessionState {
       return { ...s, state: a.state, message: a.message ?? s.message }
     case 'message':
       return { ...s, message: a.message }
-    case 'rate':
-      return { ...s, rate: a.rate }
+    case 'settings':
+      return { ...s, settings: { ...s.settings, ...a.patch } }
   }
+}
+
+const DEFAULT_SETTINGS: VoiceSettings = {
+  rate: DEFAULT_SPEECH_RATE,
+  volume: DEFAULT_SPEECH_VOLUME,
+  voiceName: '',
+  locale: DEFAULT_SPEECH_LOCALE,
 }
 
 export default function App(): React.ReactElement {
   const [session, dispatch] = useReducer(reducer, {
     state: 'IDLE',
     message: 'Tap the mic to start. Then say "Vora" before each command.',
-    rate: DEFAULT_SPEECH_RATE,
+    settings: DEFAULT_SETTINGS,
   })
   const history = useCommandHistory()
   const [sessionOn, setSessionOn] = useState(false)
@@ -57,7 +70,8 @@ export default function App(): React.ReactElement {
   const sessionActive = useRef(false)
   const processingRef = useRef(false)
   const wakeArmedUntil = useRef(0)
-  const rateRef = useRef(DEFAULT_SPEECH_RATE)
+  const settingsRef = useRef<VoiceSettings>(DEFAULT_SETTINGS)
+  settingsRef.current = session.settings
   const ARMED_WINDOW_MS = 12000
 
   const captureCandidate = useCallback((transcript: string): void => {
@@ -74,12 +88,27 @@ export default function App(): React.ReactElement {
     setLearnedAliases(next)
     console.log('[vora] auto-learned wake alias:', firstWord, 'distance:', dist)
   }, [])
-  rateRef.current = session.rate
 
+  // Track last readback for "repeat that" support
+  const lastReadbackRef = useRef<string>('')
+
+  // Load persisted settings on mount
   useEffect(() => {
-    void storageGet<number>(STORAGE_KEY_SPEECH_RATE).then((r) => {
-      if (typeof r === 'number') dispatch({ type: 'rate', rate: r })
-    })
+    const load = async (): Promise<void> => {
+      const [rate, volume, voiceName, locale] = await Promise.all([
+        storageGet<number>(STORAGE_KEY_SPEECH_RATE),
+        storageGet<number>(STORAGE_KEY_SPEECH_VOLUME),
+        storageGet<string>(STORAGE_KEY_SPEECH_VOICE),
+        storageGet<string>(STORAGE_KEY_SPEECH_LOCALE),
+      ])
+      const patch: Partial<VoiceSettings> = {}
+      if (typeof rate === 'number') patch.rate = rate
+      if (typeof volume === 'number') patch.volume = volume
+      if (typeof voiceName === 'string') patch.voiceName = voiceName
+      if (typeof locale === 'string') patch.locale = locale
+      if (Object.keys(patch).length > 0) dispatch({ type: 'settings', patch })
+    }
+    void load()
   }, [])
 
   // Auto-start passive listening when the side panel mounts. Chrome requires a
@@ -315,7 +344,16 @@ export default function App(): React.ReactElement {
   const runCommand = useCallback(
     async (cmd: VoiceCommand): Promise<void> => {
       if (!sessionActive.current) return
-      const rate = rateRef.current
+      const s = settingsRef.current
+
+      const speakWithSettings = (text: string): Promise<void> =>
+        speak(text, {
+          rate: s.rate,
+          volume: s.volume,
+          voiceName: s.voiceName || undefined,
+          locale: s.locale,
+        })
+
       // Mark processing so the recognizer's onEnd does not flip us back to
       // IDLE between pipeline stages.
       processingRef.current = true
@@ -328,9 +366,8 @@ export default function App(): React.ReactElement {
           state: 'ERROR',
           message: `Heard "${cmd.transcript}" but not clearly.`,
         })
-        await speak(
+        await speakWithSettings(
           `I heard "${cmd.transcript}" but I'm not sure what you meant. Please rephrase.`,
-          rate,
         )
         enterListening()
         return
@@ -340,11 +377,17 @@ export default function App(): React.ReactElement {
       void broadcastState('THINKING', `"${cmd.transcript}"`)
       console.log('[vora] sending to service worker:', cmd.transcript)
 
+      // Attach last readback so service worker can pass it to promptBuilder
+      const cmdWithContext: VoiceCommand = {
+        ...cmd,
+        lastReadback: lastReadbackRef.current || undefined,
+      }
+
       let intent: ParsedIntent
       try {
         const res = await chrome.runtime.sendMessage({
           type: MSG.VOICE_COMMAND_RECEIVED,
-          payload: cmd,
+          payload: cmdWithContext,
         })
         console.log('[vora] service worker response:', res)
         if (!res?.ok) {
@@ -356,7 +399,7 @@ export default function App(): React.ReactElement {
             success: false,
             timestamp: Date.now(),
           })
-          await speak(err, rate)
+          await speakWithSettings(err)
           enterListening()
           return
         }
@@ -370,7 +413,20 @@ export default function App(): React.ReactElement {
           success: false,
           timestamp: Date.now(),
         })
-        await speak('Something went wrong while processing that command.', rate)
+        await speakWithSettings('Something went wrong while processing that command.')
+        enterListening()
+        return
+      }
+
+      // Handle REPEAT_LAST directly — no execution needed
+      if (intent.action.type === ActionType.REPEAT_LAST) {
+        const toRepeat = intent.action.message || lastReadbackRef.current
+        if (toRepeat) {
+          dispatch({ type: 'state', state: 'IDLE', message: toRepeat })
+          await speakWithSettings(toRepeat)
+        } else {
+          await speakWithSettings('Nothing to repeat yet.')
+        }
         enterListening()
         return
       }
@@ -378,9 +434,9 @@ export default function App(): React.ReactElement {
       if (intent.confirmationText) {
         dispatch({ type: 'state', state: 'CONFIRMING', message: intent.confirmationText })
         void broadcastState('CONFIRMING')
-        const confirmed = await getVoiceConfirmation(intent.confirmationText, rate)
+        const confirmed = await getVoiceConfirmation(intent.confirmationText, s)
         if (!confirmed) {
-          await speak('Cancelled. What would you like to do?', rate)
+          await speakWithSettings('Cancelled. What would you like to do?')
           recordHistory({
             transcript: cmd.transcript,
             readback: 'Cancelled.',
@@ -421,6 +477,9 @@ export default function App(): React.ReactElement {
               ? intent.readbackText
               : execMessage
 
+        // Store last readback for "repeat that"
+        if (ok) lastReadbackRef.current = spoken
+
         recordHistory({
           transcript: cmd.transcript,
           readback: spoken,
@@ -436,7 +495,7 @@ export default function App(): React.ReactElement {
           message: resultPrefix + spoken,
         })
         void broadcastState(ok ? 'EXECUTING' : 'ERROR', resultPrefix + spoken)
-        await speak(spoken, rate)
+        await speakWithSettings(spoken)
         await sleep(400)
       } catch (err) {
         const m = err instanceof Error ? err.message : 'Execution error.'
@@ -448,7 +507,7 @@ export default function App(): React.ReactElement {
         })
         dispatch({ type: 'state', state: 'ERROR', message: m })
         void broadcastState('ERROR')
-        await speak('Something went wrong while acting on the page.', rate)
+        await speakWithSettings('Something went wrong while acting on the page.')
       }
 
       processingRef.current = false
@@ -457,8 +516,8 @@ export default function App(): React.ReactElement {
     [broadcastState, enterListening, recordHistory],
   )
 
-  const onRateChange = useCallback((r: number): void => {
-    dispatch({ type: 'rate', rate: r })
+  const onSettingsChange = useCallback((patch: Partial<VoiceSettings>): void => {
+    dispatch({ type: 'settings', patch })
   }, [])
 
   return (
@@ -502,7 +561,7 @@ export default function App(): React.ReactElement {
       </section>
 
       <section className="border-t border-slate-100 pt-2">
-        <SettingsPanel rate={session.rate} onRateChange={onRateChange} />
+        <SettingsPanel settings={session.settings} onSettingsChange={onSettingsChange} />
       </section>
     </main>
   )
@@ -518,6 +577,10 @@ function describeAction(action: import('../types/actions').BrowserAction): strin
       return `Click "${action.label || 'element'}"`
     case ActionType.FILL_INPUT:
       return `Fill "${action.label || 'input'}" with "${action.value}"`
+    case ActionType.CLEAR_INPUT:
+      return `Clear "${action.label || 'field'}"`
+    case ActionType.SELECT_OPTION:
+      return `Select "${action.value}" in "${action.label || 'dropdown'}"`
     case ActionType.SCROLL_DOWN:
       return 'Scroll down'
     case ActionType.SCROLL_UP:
@@ -534,13 +597,20 @@ function describeAction(action: import('../types/actions').BrowserAction): strin
       return `Focus "${action.label || 'element'}"`
     case ActionType.PRESS_KEY:
       return action.label ? action.label : `Press "${action.key}"`
+    case ActionType.REPEAT_LAST:
+      return 'Repeat last readback'
     case ActionType.UNKNOWN:
       return action.reason
   }
 }
 
-async function getVoiceConfirmation(prompt: string, rate: number): Promise<boolean> {
-  await speak(prompt, rate)
+async function getVoiceConfirmation(prompt: string, settings: VoiceSettings): Promise<boolean> {
+  await speak(prompt, {
+    rate: settings.rate,
+    volume: settings.volume,
+    voiceName: settings.voiceName || undefined,
+    locale: settings.locale,
+  })
   return new Promise<boolean>((resolve) => {
     let done = false
     const finish = (v: boolean): void => {

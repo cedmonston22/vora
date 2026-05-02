@@ -28,6 +28,7 @@ export type VoiceCommand = {
   transcript: string
   confidence: number
   timestamp: number
+  lastReadback?: string // last TTS message spoken, for "repeat that" handling
 }
 
 export type ParsedIntent = {

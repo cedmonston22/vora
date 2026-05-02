@@ -5,13 +5,16 @@ const SYSTEM_PROMPT = `You are Vora, an assistant that converts a user's spoken 
 
 Inputs you receive:
 - The user's transcript of what they said.
-- A snapshot of the page: title, URL, headings, a visible text excerpt, and a list of interactive elements (each with a CSS selector, role, label, and optional value).
+- A snapshot of the page: title, URL, and a list of interactive elements (each with a CSS selector, role, label, and optional value).
+- Optionally, the last readback message Vora spoke (used when the user asks to repeat something).
 
 Your output: ONE JSON object, no prose, no code fences, matching this schema:
 {
   "action":
     | { "type": "CLICK_ELEMENT", "selector": "<css>", "label": "<label>" }
     | { "type": "FILL_INPUT", "selector": "<css>", "value": "<text>", "label": "<label>" }
+    | { "type": "CLEAR_INPUT", "selector": "<css>", "label": "<label>" }
+    | { "type": "SELECT_OPTION", "selector": "<css>", "value": "<value>", "label": "<label>" }
     | { "type": "SCROLL_DOWN", "amount": <px optional> }
     | { "type": "SCROLL_UP", "amount": <px optional> }
     | { "type": "SCROLL_TO_ELEMENT", "selector": "<css>", "label": "<label>" }
@@ -19,7 +22,8 @@ Your output: ONE JSON object, no prose, no code fences, matching this schema:
     | { "type": "SUBMIT_FORM", "selector": "<form css>", "label": "<form label>" }
     | { "type": "READ_CONTENT", "selector": "<css optional>" }
     | { "type": "FOCUS_ELEMENT", "selector": "<css>", "label": "<label>" }
-    | { "type": "PRESS_KEY", "key": "<single key or named key>", "label": "<short description optional>" }
+    | { "type": "PRESS_KEY", "key": "<single key or named key>", "selector": "<css optional>", "label": "<short description optional>" }
+    | { "type": "REPEAT_LAST", "message": "<exact last readback text>" }
     | { "type": "UNKNOWN", "reason": "<short reason>" },
   "readback": "<short, plain-English sentence to say aloud after execution, active voice, under 20 words>"
 }
@@ -34,11 +38,16 @@ Rules:
   * Most video players: " " (space) toggles play/pause
   * Most pages: "Escape" closes dialogs, "/" focuses search
 - For "play" / "pause" / "stop" / "mute" / "skip" commands on a page with video, default to PRESS_KEY rather than FILL_INPUT or CLICK_ELEMENT.
+- If the user says "repeat that", "say that again", "what did you say", or similar, return REPEAT_LAST with the exact last readback text in the message field. If there is no previous readback, return UNKNOWN with reason "Nothing to repeat yet."
 - Output JSON only.`
 
 export type BuiltPrompt = { system: string; user: string }
 
-export function buildPrompt(transcript: string, context: PageContext): BuiltPrompt {
+export function buildPrompt(
+  transcript: string,
+  context: PageContext,
+  lastReadback?: string,
+): BuiltPrompt {
   // Compact format: one element per line, only fields that matter for action
   // selection. Reduces input tokens vs. the verbose key=value form.
   const elementLines = context.elements.map((el) => {
@@ -49,9 +58,14 @@ export function buildPrompt(transcript: string, context: PageContext): BuiltProm
     return `${el.selector} | ${parts.join(' ')}`
   })
 
+  const lastReadbackBlock =
+    lastReadback && lastReadback.trim()
+      ? `Last Vora readback: "${lastReadback.trim()}"\n\n`
+      : ''
+
   const user = `Page: "${context.title}" (${context.url})
 
-Elements (${context.elements.length}):
+${lastReadbackBlock}Elements (${context.elements.length}):
 ${elementLines.join('\n')}
 
 User said: "${transcript}"`

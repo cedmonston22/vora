@@ -54,3 +54,14 @@ Compared to vibe coding, the spec approach produced more structured, predictable
 ## Summary
 
 Kiro wasn't just a code generator for Vora — it was an active development partner. Steering docs encoded our constraints so we never had to re-explain them. Hooks enforced quality automatically under time pressure. Specs gave us architectural confidence on the hardest parts. And vibe coding let us move fast everywhere else. The combination let a small team build a complete, working Chrome extension in a single day.
+
+## Accessibility Features Shipped
+
+After the initial build, we used Kiro to extend Vora's accessibility surface for its primary users — people with motor disabilities who rely entirely on voice:
+
+- **Voice selection** — users can pick any available system voice from a dropdown in Settings, filtered by the selected locale. Online voices are marked with ☁.
+- **Volume control** — independent TTS volume slider (0–100%), separate from system volume.
+- **Language/locale selection** — BCP-47 locale dropdown populated from `speechSynthesis.getVoices()`. Changing locale resets the voice selection to prevent mismatched voice/language pairs.
+- **"Repeat that" command** — saying "repeat that", "say that again", or "what did you say" re-speaks the last TTS readback without re-executing any action. Implemented as a `REPEAT_LAST` action type: the last readback is stored in a ref in `App.tsx`, attached to every `VoiceCommand` payload, passed through the service worker to `buildPrompt()`, and intercepted in the side panel before the content script is ever involved.
+
+All settings persist to `chrome.storage.local` and are loaded on side panel mount. The `speak()` API was extended to accept a `SpeakOptions` object `{ rate, volume, voiceName, locale }` while remaining backward-compatible with the plain-number rate signature used in tests.

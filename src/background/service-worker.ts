@@ -53,7 +53,7 @@ async function handleVoiceCommand(
       return { ok: false, error: 'I could not read this page. Try refreshing the tab.' }
     }
 
-    const { system, user } = buildPrompt(cmd.transcript, context)
+    const { system, user } = buildPrompt(cmd.transcript, context, cmd.lastReadback)
     console.log('[vora-sw] calling Claude…')
     const raw = await callClaude({ system, user, apiKey })
     console.log('[vora-sw] Claude raw response:', raw)
