@@ -56,6 +56,27 @@ function parseBrowserAction(raw: unknown): BrowserAction {
       }
       return { type: ActionType.FILL_INPUT, selector, value, label }
     }
+    case ActionType.CLEAR_INPUT: {
+      const selector = stringField(raw, 'selector')
+      const label = stringField(raw, 'label') ?? ''
+      if (!selector) return unknown('Clear action missing a selector.')
+      return { type: ActionType.CLEAR_INPUT, selector, label }
+    }
+    case ActionType.SELECT_OPTION: {
+      const selector = stringField(raw, 'selector')
+      const value = stringField(raw, 'value') ?? ''
+      const label = stringField(raw, 'label') ?? ''
+      if (!selector) return unknown('Select action missing a selector.')
+      return { type: ActionType.SELECT_OPTION, selector, value, label }
+    }
+    case ActionType.PRESS_KEY: {
+      const key = stringField(raw, 'key')
+      if (!key) return unknown('Press key action missing a key.')
+      const selector = stringField(raw, 'selector')
+      return selector !== undefined
+        ? { type: ActionType.PRESS_KEY, key, selector }
+        : { type: ActionType.PRESS_KEY, key }
+    }
     case ActionType.SCROLL_DOWN: {
       const amount = numberField(raw, 'amount')
       return amount !== undefined

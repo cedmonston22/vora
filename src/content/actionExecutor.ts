@@ -9,6 +9,12 @@ export async function executeAction(action: BrowserAction): Promise<ActionResult
         return clickElement(action, action.selector, action.label)
       case ActionType.FILL_INPUT:
         return fillInput(action, action.selector, action.value, action.label)
+      case ActionType.CLEAR_INPUT:
+        return clearInput(action, action.selector, action.label)
+      case ActionType.SELECT_OPTION:
+        return selectOption(action, action.selector, action.value, action.label)
+      case ActionType.PRESS_KEY:
+        return pressKey(action, action.key, action.selector)
       case ActionType.SCROLL_DOWN: {
         const dy = action.amount ?? Math.round(window.innerHeight * 0.85)
         window.scrollBy({ top: dy, behavior: 'smooth' })
@@ -128,6 +134,59 @@ function focusElement(action: BrowserAction, selector: string, label: string): A
     return { success: true, action, message: `Focused ${label || 'that element'}.` }
   }
   return { success: false, action, message: `I could not focus ${label || 'that element'}.` }
+}
+
+function clearInput(action: BrowserAction, selector: string, label: string): ActionResult {
+  const el = pick(selector)
+  if (!el) return missing(action, label)
+  if (!(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement)) {
+    return { success: false, action, message: `I could not clear ${label || 'that field'}.` }
+  }
+  el.focus()
+  el.value = ''
+  el.dispatchEvent(new Event('input', { bubbles: true }))
+  el.dispatchEvent(new Event('change', { bubbles: true }))
+  return { success: true, action, message: `Cleared ${label || 'that field'}.` }
+}
+
+function selectOption(
+  action: BrowserAction,
+  selector: string,
+  value: string,
+  label: string,
+): ActionResult {
+  const el = pick(selector)
+  if (!el) return missing(action, label)
+  if (!(el instanceof HTMLSelectElement)) {
+    return { success: false, action, message: `I could not find the ${label || 'dropdown'}.` }
+  }
+  // Try matching by value first, then by visible text
+  const opt = Array.from(el.options).find(
+    (o) => o.value === value || o.text.toLowerCase() === value.toLowerCase(),
+  )
+  if (!opt) {
+    return { success: false, action, message: `I could not find option "${value}" in ${label || 'the dropdown'}.` }
+  }
+  el.value = opt.value
+  el.dispatchEvent(new Event('change', { bubbles: true }))
+  return { success: true, action, message: `Selected ${opt.text} in ${label || 'the dropdown'}.` }
+}
+
+function pressKey(action: BrowserAction, key: string, selector: string | undefined): ActionResult {
+  const target = selector ? pick(selector) : document.activeElement
+  if (!target || !(target instanceof HTMLElement)) {
+    return { success: false, action, message: `I could not find an element to press ${key} on.` }
+  }
+  target.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
+  target.dispatchEvent(new KeyboardEvent('keyup', { key, bubbles: true }))
+  // For Enter on inputs/forms, also trigger submit
+  if (key === 'Enter') {
+    if (target instanceof HTMLInputElement) {
+      const form = target.closest('form')
+      if (form) form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    }
+  }
+  return { success: true, action, message: `Pressed ${key}.` }
 }
 
 function pick(selector: string): Element | null {

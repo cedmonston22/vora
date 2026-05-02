@@ -61,7 +61,7 @@ This document defines the exact pipeline every voice command follows in Vora —
    └── Visual feedback only during AI processing
 
 7. CONFIRMATION (DESTRUCTIVE ACTIONS ONLY)
-   └── If action type is SUBMIT_FORM, CLICK_SEND, CLICK_DELETE, CLICK_PAY:
+   └── If action type is SUBMIT_FORM, or CLICK_ELEMENT on a destructive label (delete, send, pay, etc.):
        - TTS reads back: "I'm about to [action]. Say yes to confirm."
        - Recognition restarts, listens for yes/no
        - Yes → proceed, No → cancel and return to LISTENING
