@@ -44,8 +44,16 @@ export async function callClaude(args: ClaudeCallArgs): Promise<string> {
       },
       body: JSON.stringify({
         model: CLAUDE_MODEL,
-        max_tokens: 1024,
-        system: args.system,
+        max_tokens: 512,
+        // Cache the fixed system prompt. Within the cache TTL (5 min), cached
+        // input tokens are billed at 10% of normal cost.
+        system: [
+          {
+            type: 'text',
+            text: args.system,
+            cache_control: { type: 'ephemeral' },
+          },
+        ],
         messages: [{ role: 'user', content: args.user }],
       }),
       signal: controller.signal,

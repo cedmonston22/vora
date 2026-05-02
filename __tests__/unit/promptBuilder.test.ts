@@ -56,9 +56,9 @@ describe('buildPrompt', () => {
     expect(system.toLowerCase()).toContain('password')
   })
 
-  it('lists every heading', () => {
+  it('omits headings and visible text to keep the prompt small', () => {
     const { user } = buildPrompt('x', ctx)
-    expect(user).toContain('Welcome')
-    expect(user).toContain('Contact us')
+    expect(user).not.toContain('Welcome')
+    expect(user).not.toContain('Some short page text.')
   })
 })

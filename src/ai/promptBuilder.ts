@@ -19,6 +19,7 @@ Your output: ONE JSON object, no prose, no code fences, matching this schema:
     | { "type": "SUBMIT_FORM", "selector": "<form css>", "label": "<form label>" }
     | { "type": "READ_CONTENT", "selector": "<css optional>" }
     | { "type": "FOCUS_ELEMENT", "selector": "<css>", "label": "<label>" }
+    | { "type": "PRESS_KEY", "key": "<single key or named key>", "label": "<short description optional>" }
     | { "type": "UNKNOWN", "reason": "<short reason>" },
   "readback": "<short, plain-English sentence to say aloud after execution, active voice, under 20 words>"
 }
@@ -28,30 +29,30 @@ Rules:
 - For NAVIGATE, only use URLs that appear as href values in the element list, or URLs the user spoke explicitly.
 - If the command is ambiguous, no element matches, or it asks for something Vora cannot do, return UNKNOWN with a clear reason.
 - Never fill inputs labelled password, PIN, SSN, social security, credit card, CVV, or CVC. For these, return UNKNOWN with reason "I cannot fill that field for your security."
+- For media playback (play, pause, mute, fullscreen, skip), prefer PRESS_KEY with the site's keyboard shortcut over clicking a player button:
+  * YouTube: "k" toggles play/pause, "m" toggles mute, "f" toggles fullscreen, "j"/"l" rewind/forward 10s
+  * Most video players: " " (space) toggles play/pause
+  * Most pages: "Escape" closes dialogs, "/" focuses search
+- For "play" / "pause" / "stop" / "mute" / "skip" commands on a page with video, default to PRESS_KEY rather than FILL_INPUT or CLICK_ELEMENT.
 - Output JSON only.`
 
 export type BuiltPrompt = { system: string; user: string }
 
 export function buildPrompt(transcript: string, context: PageContext): BuiltPrompt {
+  // Compact format: one element per line, only fields that matter for action
+  // selection. Reduces input tokens vs. the verbose key=value form.
   const elementLines = context.elements.map((el) => {
-    const value = el.value ? ` value="${truncate(el.value, 60)}"` : ''
-    const href = el.href ? ` href="${el.href}"` : ''
-    const type = el.type ? ` type="${el.type}"` : ''
-    const disabled = el.disabled ? ' [disabled]' : ''
-    return `  - selector=${el.selector} role=${el.role}${type} label="${truncate(el.label, 100)}"${value}${href}${disabled}`
+    const parts = [el.role, `"${truncate(el.label, 60)}"`]
+    if (el.value) parts.push(`val:"${truncate(el.value, 40)}"`)
+    if (el.href) parts.push(`→${el.href}`)
+    if (el.disabled) parts.push('[disabled]')
+    return `${el.selector} | ${parts.join(' ')}`
   })
-
-  const headingsBlock = context.headings.length > 0
-    ? `Headings:\n${context.headings.map((h) => `  - ${h}`).join('\n')}\n\n`
-    : ''
 
   const user = `Page: "${context.title}" (${context.url})
 
-${headingsBlock}Interactive elements (${context.elements.length}):
+Elements (${context.elements.length}):
 ${elementLines.join('\n')}
-
-Visible text excerpt:
-${truncate(context.visibleText, 1200)}
 
 User said: "${transcript}"`
 

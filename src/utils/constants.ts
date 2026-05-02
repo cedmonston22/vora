@@ -5,7 +5,52 @@ export const AI_HARD_TIMEOUT_MS = 15_000
 
 // Voice
 export const WAKE_WORD = 'hey vora'
-export const MIN_CONFIDENCE = 0.7
+
+// Wake word matching. Web Speech often mishears "Vora" as "vore uh", "nora",
+// "bora", or breaks it across two tokens. We accept a list of phonetic variants
+// to keep the wake gate forgiving. Order does not matter — the matcher sorts
+// by length internally so longer phrases match before shorter ones.
+const WAKE_PREFIXES = ['', 'hey ', 'hi ', 'ok ', 'okay ']
+const WAKE_CORES = [
+  'vora',
+  'vore uh',
+  'vore-uh',
+  'voreuh',
+  'vore ah',
+  'vore a',
+  'vore',
+  'nora',
+  'bora',
+  'dora',
+  'aurora',
+  'verra',
+  'vera',
+  'ora',
+  'oraa',
+  'voda',
+  'vola',
+  'vora vora',
+  'phora',
+  'laura',
+  'flora',
+  'lora',
+  'cora',
+  'tora',
+  'sora',
+  'mora',
+  'pora',
+  'veera',
+  'veerah',
+  'four uh',
+  'four a',
+  'fora',
+]
+
+export const WAKE_WORDS: readonly string[] = WAKE_PREFIXES
+  .flatMap((p) => WAKE_CORES.map((c) => p + c))
+  .sort((a, b) => b.length - a.length)
+
+export const MIN_CONFIDENCE = 0.35
 export const CONFIRMATION_TIMEOUT_MS = 5_000
 export const DEFAULT_SPEECH_RATE = 1.0
 export const MIN_SPEECH_RATE = 0.5
@@ -13,7 +58,7 @@ export const MAX_SPEECH_RATE = 1.5
 
 // DOM extraction
 export const MAX_VISIBLE_TEXT_CHARS = 2_000
-export const MAX_ELEMENTS = 100
+export const MAX_ELEMENTS = 30
 
 // Command history
 export const MAX_HISTORY_ENTRIES = 20

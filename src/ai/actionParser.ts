@@ -102,6 +102,14 @@ function parseBrowserAction(raw: unknown): BrowserAction {
       if (!selector) return unknown('Focus action missing a selector.')
       return { type: ActionType.FOCUS_ELEMENT, selector, label }
     }
+    case ActionType.PRESS_KEY: {
+      const key = stringField(raw, 'key')
+      if (!key) return unknown('Press-key action missing a key.')
+      const label = stringField(raw, 'label')
+      return label !== undefined
+        ? { type: ActionType.PRESS_KEY, key, label }
+        : { type: ActionType.PRESS_KEY, key }
+    }
     case ActionType.UNKNOWN: {
       const reason = stringField(raw, 'reason') ?? 'Unrecognized command.'
       return { type: ActionType.UNKNOWN, reason }

@@ -29,6 +29,8 @@ export async function executeAction(action: BrowserAction): Promise<ActionResult
         return readContent(action, action.selector)
       case ActionType.FOCUS_ELEMENT:
         return focusElement(action, action.selector, action.label)
+      case ActionType.PRESS_KEY:
+        return pressKey(action, action.key, action.label)
       case ActionType.UNKNOWN:
         return { success: false, action, message: action.reason }
     }
@@ -48,8 +50,62 @@ function clickElement(action: BrowserAction, selector: string, label: string): A
     return { success: false, action, message: `I could not click ${label || 'that element'}.` }
   }
   el.scrollIntoView({ block: 'center' })
+  // Some sites (YouTube, custom React components) ignore plain .click() unless
+  // we also dispatch a full mouse event sequence.
   el.click()
+  for (const type of ['mousedown', 'mouseup', 'click'] as const) {
+    el.dispatchEvent(
+      new MouseEvent(type, { bubbles: true, cancelable: true, view: window, button: 0 }),
+    )
+  }
   return { success: true, action, message: `Clicked ${label || 'element'}.` }
+}
+
+function pressKey(action: BrowserAction, key: string, label?: string): ActionResult {
+  const target = (document.activeElement as HTMLElement | null) ?? document.body
+  // Map a few common spoken/named forms to KeyboardEvent values.
+  const normalized = normalizeKey(key)
+  const code = guessCode(normalized)
+  for (const type of ['keydown', 'keypress', 'keyup'] as const) {
+    target.dispatchEvent(
+      new KeyboardEvent(type, {
+        key: normalized,
+        code,
+        bubbles: true,
+        cancelable: true,
+      }),
+    )
+  }
+  return { success: true, action, message: label ? `${label}.` : `Pressed ${normalized}.` }
+}
+
+function normalizeKey(k: string): string {
+  const lower = k.trim().toLowerCase()
+  if (lower === 'space' || lower === 'spacebar' || lower === ' ') return ' '
+  if (lower === 'esc' || lower === 'escape') return 'Escape'
+  if (lower === 'enter' || lower === 'return') return 'Enter'
+  if (lower === 'tab') return 'Tab'
+  if (lower === 'backspace' || lower === 'delete') return 'Backspace'
+  if (lower === 'arrowleft' || lower === 'left') return 'ArrowLeft'
+  if (lower === 'arrowright' || lower === 'right') return 'ArrowRight'
+  if (lower === 'arrowup' || lower === 'up') return 'ArrowUp'
+  if (lower === 'arrowdown' || lower === 'down') return 'ArrowDown'
+  if (lower.length === 1) return lower
+  return k
+}
+
+function guessCode(normalized: string): string {
+  if (normalized === ' ') return 'Space'
+  if (normalized === 'Escape') return 'Escape'
+  if (normalized === 'Enter') return 'Enter'
+  if (normalized === 'Tab') return 'Tab'
+  if (normalized === 'Backspace') return 'Backspace'
+  if (normalized === 'ArrowLeft') return 'ArrowLeft'
+  if (normalized === 'ArrowRight') return 'ArrowRight'
+  if (normalized === 'ArrowUp') return 'ArrowUp'
+  if (normalized === 'ArrowDown') return 'ArrowDown'
+  if (normalized.length === 1) return `Key${normalized.toUpperCase()}`
+  return normalized
 }
 
 function fillInput(

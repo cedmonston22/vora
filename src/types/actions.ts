@@ -8,6 +8,7 @@ export enum ActionType {
   SUBMIT_FORM = 'SUBMIT_FORM',
   READ_CONTENT = 'READ_CONTENT',
   FOCUS_ELEMENT = 'FOCUS_ELEMENT',
+  PRESS_KEY = 'PRESS_KEY',
   UNKNOWN = 'UNKNOWN',
 }
 
@@ -26,6 +27,7 @@ export type BrowserAction =
   | { type: ActionType.SUBMIT_FORM; selector: string; label: string }
   | { type: ActionType.READ_CONTENT; selector?: string }
   | { type: ActionType.FOCUS_ELEMENT; selector: string; label: string }
+  | { type: ActionType.PRESS_KEY; key: string; label?: string }
   | { type: ActionType.UNKNOWN; reason: string }
 
 export type ActionResult = {

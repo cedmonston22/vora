@@ -33,6 +33,8 @@ let active: RecognitionInstance | null = null
 export type ListenCallbacks = {
   onPartial?: (transcript: string) => void
   onFinal: (cmd: VoiceCommand) => void
+  onError?: (error: string) => void
+  onEnd?: () => void
 }
 
 export function startListening(
@@ -49,7 +51,7 @@ export function startListening(
       : onFinalOrCallbacks
 
   const r = new Ctor()
-  r.continuous = false
+  r.continuous = true
   r.interimResults = true
   r.maxAlternatives = 1
   r.lang = 'en-US'
@@ -73,16 +75,21 @@ export function startListening(
     }
   }
 
-  r.onerror = () => {
+  r.onerror = (e) => {
+    console.warn('[vora-rec] error:', e.error)
     active = null
+    cbs.onError?.(e.error)
   }
 
   r.onend = () => {
+    console.log('[vora-rec] ended')
     active = null
+    cbs.onEnd?.()
   }
 
   active = r
   try {
+    console.log('[vora-rec] starting')
     r.start()
   } catch (err) {
     active = null

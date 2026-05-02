@@ -6,7 +6,7 @@ type Props = { state: ExtensionState }
 
 const labelMap: Record<ExtensionState, string> = {
   IDLE: 'Idle',
-  LISTENING: 'Listening',
+  LISTENING: 'Active',
   THINKING: 'Thinking',
   CONFIRMING: 'Confirm?',
   EXECUTING: 'Acting',

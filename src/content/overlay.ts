@@ -74,7 +74,7 @@ function ensure(): PillDom {
 
 function badgeStyle(state: ExtensionState): { text: string; bg: string } {
   switch (state) {
-    case 'LISTENING':  return { text: '🎙 Listening',  bg: OVERLAY_COLORS.LISTENING }
+    case 'LISTENING':  return { text: '🎙 Active',     bg: OVERLAY_COLORS.LISTENING }
     case 'THINKING':   return { text: '⏳ Thinking',   bg: OVERLAY_COLORS.THINKING }
     case 'CONFIRMING': return { text: '❓ Confirm?',   bg: OVERLAY_COLORS.CONFIRMING }
     case 'EXECUTING':  return { text: '⚡ Acting',     bg: OVERLAY_COLORS.EXECUTING }
