@@ -49,10 +49,10 @@
 - Voice confirmation gates every destructive action.
 - Sensitive fields (password, PIN, SSN, credit card) are excluded from the page context sent to Claude and refused at the executor.
 - TTS uses plain English — never reads selectors, codes, or technical strings.
-- The side panel and the in-page transcript panel both display the live state, so judges can see what Vora is doing in real time.
+- The side panel and the in-page status pill both display the live state, so judges can see what Vora is doing in real time.
 
 ## Known MVP Gaps to Mention Up Front
 
 - **Wake word ("Hey Vora") is not implemented in this MVP.** Activation is a single click on the mic in the side panel. Wake word is future work.
 - **Service worker does not own the global state machine** as described in `voice-ai-flow.md`. The state machine lives in the side panel React app because Web Speech APIs require a window context. The service worker is a stateless Claude+context proxy.
-- The in-page side panel shifts host page content using `body { margin-right }` — sites with fixed-position elements on the right edge or `body { overflow: hidden }` may not visually shift. Demo on Wikipedia, Hacker News, or simple article pages.
+- The in-page overlay is a small pill in the bottom-right corner — it does not shift or cover page content.

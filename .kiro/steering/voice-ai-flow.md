@@ -26,8 +26,8 @@ This document defines the exact pipeline every voice command follows in Vora —
    └── User clicks the mic button in the side panel
    └── Side panel state sets to LISTENING
    └── Web Speech API recognition starts (in the side panel window context)
-   └── In-page side panel appears, shifts host body margin-right by 340px
-   └── Status pill shows "Listening"
+   └── In-page status pill appears in bottom-right corner (Shadow DOM, no body shift)
+   └── Status pill shows "🎙 Listening"
 
 2. VOICE CAPTURE
    └── Web Speech API captures continuous speech

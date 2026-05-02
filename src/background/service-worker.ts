@@ -87,6 +87,19 @@ async function pickTargetTabId(
 }
 
 async function requestContext(tabId: number): Promise<PageContext | null> {
+  // Bail early on restricted pages where content scripts cannot run
+  const tabs = await chrome.tabs.query({ active: true, currentWindow: true })
+  const url = tabs[0]?.url ?? ''
+  if (
+    url.startsWith('chrome://') ||
+    url.startsWith('chrome-extension://') ||
+    url.startsWith('about:') ||
+    url === ''
+  ) {
+    console.warn('[vora-sw] restricted page, cannot inject:', url)
+    return null
+  }
+
   const send = async (): Promise<unknown> =>
     chrome.tabs.sendMessage(tabId, { type: MSG.DOM_CONTEXT_REQUEST })
 
@@ -97,10 +110,10 @@ async function requestContext(tabId: number): Promise<PageContext | null> {
     console.warn('[vora-sw] no content script on tab, attempting inject:', err)
     const injected = await tryInject(tabId)
     if (!injected) return null
-    try {
-      res = await send()
-    } catch (err2) {
-      console.error('[vora-sw] still failed after inject:', err2)
+    // Poll until the content script is ready (CRXJS loader uses async import)
+    res = await pollForContentScript(tabId, 20, 300)
+    if (res === null) {
+      console.error('[vora-sw] content script never became ready after inject')
       return null
     }
   }
@@ -117,6 +130,26 @@ async function requestContext(tabId: number): Promise<PageContext | null> {
   return null
 }
 
+async function pollForContentScript(
+  tabId: number,
+  attempts: number,
+  intervalMs: number,
+): Promise<unknown | null> {
+  console.log(`[vora-sw] polling for content script (${attempts} attempts x ${intervalMs}ms)`)
+  for (let i = 0; i < attempts; i++) {
+    await new Promise<void>((resolve) => setTimeout(resolve, intervalMs))
+    try {
+      const res = await chrome.tabs.sendMessage(tabId, { type: MSG.DOM_CONTEXT_REQUEST })
+      console.log(`[vora-sw] content script responded on attempt ${i + 1}`)
+      return res
+    } catch (err) {
+      console.log(`[vora-sw] poll attempt ${i + 1}/${attempts} failed:`, (err as Error).message)
+    }
+  }
+  console.error('[vora-sw] content script never responded after all poll attempts')
+  return null
+}
+
 async function tryInject(tabId: number): Promise<boolean> {
   const manifest = chrome.runtime.getManifest()
   const files = manifest.content_scripts?.[0]?.js
@@ -125,10 +158,7 @@ async function tryInject(tabId: number): Promise<boolean> {
     return false
   }
   try {
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      files,
-    })
+    await chrome.scripting.executeScript({ target: { tabId }, files })
     console.log('[vora-sw] injected content script into tab', tabId, files)
     return true
   } catch (err) {

@@ -34,6 +34,12 @@
   "side_panel": {
     "default_path": "src/popup/index.html"
   },
+  "web_accessible_resources": [
+    {
+      "resources": ["assets/*"],
+      "matches": ["<all_urls>"]
+    }
+  ],
   "icons": {
     "16": "public/icon16.png",
     "48": "public/icon48.png",
