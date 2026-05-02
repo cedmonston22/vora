@@ -384,6 +384,7 @@ export default function App(): React.ReactElement {
       }
 
       let intent: ParsedIntent
+      let restricted = false
       try {
         const res = await chrome.runtime.sendMessage({
           type: MSG.VOICE_COMMAND_RECEIVED,
@@ -404,6 +405,7 @@ export default function App(): React.ReactElement {
           return
         }
         intent = res.intent as ParsedIntent
+        restricted = res.restricted === true
       } catch (err) {
         const m = err instanceof Error ? err.message : 'Background error.'
         dispatch({ type: 'state', state: 'ERROR', message: m })
@@ -461,13 +463,29 @@ export default function App(): React.ReactElement {
       try {
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
         if (tab?.id == null) throw new Error('No active tab.')
-        const exec = await chrome.tabs.sendMessage(tab.id, {
-          type: MSG.ACTION_EXECUTE,
-          payload: intent.action,
-        })
-        const ok = exec?.payload?.success === true
+        let execSuccess: boolean
+        let execMessageRaw: string
+        if (restricted && intent.action.type === ActionType.NAVIGATE) {
+          // Content script can't run on the New Tab page or other chrome:// URLs,
+          // so the service worker performs the navigation via chrome.tabs.update.
+          const navRes = await chrome.runtime.sendMessage({
+            type: MSG.BACKGROUND_NAVIGATE,
+            payload: { url: intent.action.url },
+          })
+          execSuccess = navRes?.success === true
+          execMessageRaw = typeof navRes?.message === 'string' ? navRes.message : ''
+        } else {
+          const exec = await chrome.tabs.sendMessage(tab.id, {
+            type: MSG.ACTION_EXECUTE,
+            payload: intent.action,
+          })
+          execSuccess = exec?.payload?.success === true
+          execMessageRaw =
+            typeof exec?.payload?.message === 'string' ? exec.payload.message : ''
+        }
+        const ok = execSuccess
         const execMessage: string =
-          (typeof exec?.payload?.message === 'string' ? exec.payload.message : '') ||
+          execMessageRaw ||
           (ok ? intent.readbackText : 'I tried but could not act on the page.')
 
         const spoken =

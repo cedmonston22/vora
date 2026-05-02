@@ -8,7 +8,13 @@ export async function executeAction(action: BrowserAction): Promise<ActionResult
       case ActionType.CLICK_ELEMENT:
         return clickElement(action, action.selector, action.label)
       case ActionType.FILL_INPUT:
-        return fillInput(action, action.selector, action.value, action.label)
+        return fillInput(
+          action,
+          action.selector,
+          action.value,
+          action.label,
+          action.submit === true,
+        )
       case ActionType.CLEAR_INPUT:
         return clearInput(action, action.selector, action.label)
       case ActionType.SELECT_OPTION:
@@ -73,6 +79,7 @@ function fillInput(
   selector: string,
   value: string,
   label: string,
+  submit: boolean,
 ): ActionResult {
   if (isSensitiveField(label)) {
     return { success: false, action, message: 'I cannot fill that field for your security.' }
@@ -89,7 +96,76 @@ function fillInput(
   el.value = value
   el.dispatchEvent(new Event('input', { bubbles: true }))
   el.dispatchEvent(new Event('change', { bubbles: true }))
+
+  if (submit) {
+    const submitted = submitFromInput(el)
+    return {
+      success: true,
+      action,
+      message: submitted
+        ? `Searched for "${value}".`
+        : `Filled ${label || 'that field'}.`,
+    }
+  }
   return { success: true, action, message: `Filled ${label || 'that field'}.` }
+}
+
+// Submit the search/form an input belongs to. SPA sites (YouTube, Amazon, etc.)
+// often ignore form.submit() because their handler is wired to a submit button
+// click or an Enter keydown. Try the more compatible paths first.
+// Returns true if some submission path was taken.
+function submitFromInput(el: HTMLInputElement | HTMLTextAreaElement): boolean {
+  const form = el.form
+
+  // 1. Click a real submit button if one exists. This fires the same
+  //    handlers users get via mouse/touch — most reliable for SPAs.
+  const submitBtn = findSubmitButton(form, el)
+  if (submitBtn) {
+    submitBtn.click()
+    return true
+  }
+
+  // 2. Synthesize Enter on the input. Many search boxes listen for Enter
+  //    directly rather than relying on form submission.
+  for (const type of ['keydown', 'keypress', 'keyup'] as const) {
+    el.dispatchEvent(
+      new KeyboardEvent(type, {
+        key: 'Enter',
+        code: 'Enter',
+        keyCode: 13,
+        which: 13,
+        bubbles: true,
+        cancelable: true,
+      }),
+    )
+  }
+
+  // 3. Last resort: real form submission.
+  if (form) {
+    try {
+      if (typeof form.requestSubmit === 'function') form.requestSubmit()
+      else form.submit()
+    } catch {
+      // ignore
+    }
+  }
+  return true
+}
+
+function findSubmitButton(
+  form: HTMLFormElement | null,
+  input: HTMLElement,
+): HTMLElement | null {
+  const scope: ParentNode = form ?? input.parentElement ?? document
+  const candidates = scope.querySelectorAll<HTMLElement>(
+    'button[type="submit"], input[type="submit"], button[aria-label*="search" i], button[aria-label*="Search" i], button#search-icon-legacy, [role="button"][aria-label*="search" i]',
+  )
+  for (const c of candidates) {
+    if (c instanceof HTMLButtonElement && c.disabled) continue
+    if (c instanceof HTMLInputElement && c.disabled) continue
+    return c
+  }
+  return null
 }
 
 function clearInput(action: BrowserAction, selector: string, label: string): ActionResult {

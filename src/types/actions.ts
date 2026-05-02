@@ -22,7 +22,13 @@ export const DESTRUCTIVE_ACTIONS = new Set<ActionType>([
 
 export type BrowserAction =
   | { type: ActionType.CLICK_ELEMENT; selector: string; label: string }
-  | { type: ActionType.FILL_INPUT; selector: string; value: string; label: string }
+  | {
+      type: ActionType.FILL_INPUT
+      selector: string
+      value: string
+      label: string
+      submit?: boolean
+    }
   | { type: ActionType.CLEAR_INPUT; selector: string; label: string }
   | { type: ActionType.SELECT_OPTION; selector: string; value: string; label: string }
   | { type: ActionType.PRESS_KEY; key: string; selector?: string; label?: string }

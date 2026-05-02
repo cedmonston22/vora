@@ -12,6 +12,7 @@ export const MSG = {
   WAKE_WORD_DETECTED: 'WAKE_WORD_DETECTED',
   TRANSCRIPT_UPDATE: 'TRANSCRIPT_UPDATE',
   HISTORY_ENTRY: 'HISTORY_ENTRY',
+  BACKGROUND_NAVIGATE: 'BACKGROUND_NAVIGATE',
 } as const
 
 export type MsgType = (typeof MSG)[keyof typeof MSG]
@@ -56,3 +57,4 @@ export type ExtensionMessage =
   | { type: typeof MSG.WAKE_WORD_DETECTED }
   | { type: typeof MSG.TRANSCRIPT_UPDATE; payload: { partial: string } }
   | { type: typeof MSG.HISTORY_ENTRY; payload: CommandHistoryEntry }
+  | { type: typeof MSG.BACKGROUND_NAVIGATE; payload: { url: string } }

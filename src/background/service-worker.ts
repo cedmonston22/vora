@@ -6,15 +6,33 @@ import type {
 } from '../types/commands'
 import { MSG } from '../types/commands'
 import { ActionType } from '../types/actions'
-import { buildPrompt } from '../ai/promptBuilder'
+import { buildPrompt, buildRestrictedPrompt } from '../ai/promptBuilder'
 import { callClaude, AIError } from '../ai/claudeClient'
 import { parseAction, ParseError } from '../ai/actionParser'
 import { storageGet } from '../utils/helpers'
 import { STORAGE_KEY_API_KEY } from '../utils/constants'
 
 type ServiceResult =
-  | { ok: true; intent: ParsedIntent }
+  | { ok: true; intent: ParsedIntent; restricted?: boolean }
   | { ok: false; error: string }
+
+type ContextResult =
+  | { kind: 'ok'; context: PageContext }
+  | { kind: 'restricted' }
+  | { kind: 'failed' }
+
+function isRestrictedUrl(url: string): boolean {
+  if (!url) return true
+  return (
+    url.startsWith('chrome://') ||
+    url.startsWith('chrome-extension://') ||
+    url.startsWith('chrome-search://') ||
+    url.startsWith('edge://') ||
+    url.startsWith('about:') ||
+    url.startsWith('view-source:') ||
+    url.startsWith('devtools://')
+  )
+}
 
 chrome.runtime.onInstalled.addListener(() => {
   // Make clicking the extension icon open the side panel instead of a popup.
@@ -24,10 +42,37 @@ chrome.runtime.onInstalled.addListener(() => {
 })
 
 chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendResponse) => {
-  if (message.type !== MSG.VOICE_COMMAND_RECEIVED) return false
-  void handleVoiceCommand(message.payload, sender).then(sendResponse)
-  return true
+  if (message.type === MSG.VOICE_COMMAND_RECEIVED) {
+    void handleVoiceCommand(message.payload, sender).then(sendResponse)
+    return true
+  }
+  if (message.type === MSG.BACKGROUND_NAVIGATE) {
+    void handleBackgroundNavigate(message.payload.url, sender).then(sendResponse)
+    return true
+  }
+  return false
 })
+
+async function handleBackgroundNavigate(
+  url: string,
+  sender: chrome.runtime.MessageSender,
+): Promise<{ success: boolean; message: string }> {
+  try {
+    const tabId = await pickTargetTabId(sender)
+    if (tabId == null) return { success: false, message: 'No active tab to navigate.' }
+    if (!/^https?:\/\//i.test(url)) {
+      return { success: false, message: 'Refusing to navigate to a non-http(s) URL.' }
+    }
+    await chrome.tabs.update(tabId, { url })
+    return { success: true, message: `Navigating to ${url}.` }
+  } catch (err) {
+    console.error('[vora-sw] background navigate failed:', err)
+    return {
+      success: false,
+      message: err instanceof Error ? err.message : 'Navigation failed.',
+    }
+  }
+}
 
 async function handleVoiceCommand(
   cmd: VoiceCommand,
@@ -47,13 +92,16 @@ async function handleVoiceCommand(
       return { ok: false, error: 'Set your Anthropic API key in Settings to continue.' }
     }
 
-    const context = await requestContext(tabId)
-    console.log('[vora-sw] page context elements:', context?.elements.length)
-    if (!context) {
+    const ctxResult = await requestContext(tabId)
+    console.log('[vora-sw] context result:', ctxResult.kind)
+    if (ctxResult.kind === 'failed') {
       return { ok: false, error: 'I could not read this page. Try refreshing the tab.' }
     }
 
-    const { system, user } = buildPrompt(cmd.transcript, context, cmd.lastReadback)
+    const { system, user } =
+      ctxResult.kind === 'restricted'
+        ? buildRestrictedPrompt(cmd.transcript, cmd.lastReadback)
+        : buildPrompt(cmd.transcript, ctxResult.context, cmd.lastReadback)
     console.log('[vora-sw] calling Claude…')
     const raw = await callClaude({ system, user, apiKey })
     console.log('[vora-sw] Claude raw response:', raw)
@@ -62,6 +110,22 @@ async function handleVoiceCommand(
 
     if (intent.action.type === ActionType.UNKNOWN) {
       return { ok: false, error: intent.action.reason }
+    }
+
+    if (ctxResult.kind === 'restricted') {
+      // From a restricted page only NAVIGATE (and REPEAT_LAST) make sense.
+      // Anything else means the model ignored the prompt — surface a clear error.
+      if (
+        intent.action.type !== ActionType.NAVIGATE &&
+        intent.action.type !== ActionType.REPEAT_LAST
+      ) {
+        return {
+          ok: false,
+          error:
+            "I can only navigate from this page. Try saying 'go to' or 'search for'.",
+        }
+      }
+      return { ok: true, intent, restricted: true }
     }
 
     return { ok: true, intent }
@@ -86,18 +150,13 @@ async function pickTargetTabId(
   return tab?.id ?? null
 }
 
-async function requestContext(tabId: number): Promise<PageContext | null> {
+async function requestContext(tabId: number): Promise<ContextResult> {
   // Bail early on restricted pages where content scripts cannot run
-  const tabs = await chrome.tabs.query({ active: true, currentWindow: true })
-  const url = tabs[0]?.url ?? ''
-  if (
-    url.startsWith('chrome://') ||
-    url.startsWith('chrome-extension://') ||
-    url.startsWith('about:') ||
-    url === ''
-  ) {
+  const tab = await chrome.tabs.get(tabId).catch(() => null)
+  const url = tab?.url ?? ''
+  if (isRestrictedUrl(url)) {
     console.warn('[vora-sw] restricted page, cannot inject:', url)
-    return null
+    return { kind: 'restricted' }
   }
 
   const send = async (): Promise<unknown> =>
@@ -109,12 +168,12 @@ async function requestContext(tabId: number): Promise<PageContext | null> {
   } catch (err) {
     console.warn('[vora-sw] no content script on tab, attempting inject:', err)
     const injected = await tryInject(tabId)
-    if (!injected) return null
+    if (!injected) return { kind: 'failed' }
     // Poll until the content script is ready (CRXJS loader uses async import)
     res = await pollForContentScript(tabId, 20, 300)
     if (res === null) {
       console.error('[vora-sw] content script never became ready after inject')
-      return null
+      return { kind: 'failed' }
     }
   }
 
@@ -124,10 +183,10 @@ async function requestContext(tabId: number): Promise<PageContext | null> {
     'type' in res &&
     (res as { type: string }).type === MSG.DOM_CONTEXT_RESPONSE
   ) {
-    return (res as unknown as { payload: PageContext }).payload
+    return { kind: 'ok', context: (res as unknown as { payload: PageContext }).payload }
   }
   console.warn('[vora-sw] unexpected response shape:', res)
-  return null
+  return { kind: 'failed' }
 }
 
 async function pollForContentScript(

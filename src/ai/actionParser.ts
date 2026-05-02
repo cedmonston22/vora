@@ -54,7 +54,10 @@ function parseBrowserAction(raw: unknown): BrowserAction {
       if (isSensitiveField(label)) {
         return unknown('I cannot fill that field for your security.')
       }
-      return { type: ActionType.FILL_INPUT, selector, value, label }
+      const submit = raw['submit'] === true
+      return submit
+        ? { type: ActionType.FILL_INPUT, selector, value, label, submit: true }
+        : { type: ActionType.FILL_INPUT, selector, value, label }
     }
     case ActionType.CLEAR_INPUT: {
       const selector = stringField(raw, 'selector')
