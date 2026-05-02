@@ -11,6 +11,7 @@ export enum ActionType {
   SUBMIT_FORM = 'SUBMIT_FORM',
   READ_CONTENT = 'READ_CONTENT',
   FOCUS_ELEMENT = 'FOCUS_ELEMENT',
+  REPEAT_LAST = 'REPEAT_LAST',
   UNKNOWN = 'UNKNOWN',
 }
 
@@ -32,6 +33,7 @@ export type BrowserAction =
   | { type: ActionType.SUBMIT_FORM; selector: string; label: string }
   | { type: ActionType.READ_CONTENT; selector?: string }
   | { type: ActionType.FOCUS_ELEMENT; selector: string; label: string }
+  | { type: ActionType.REPEAT_LAST; message: string }
   | { type: ActionType.UNKNOWN; reason: string }
 
 export type ActionResult = {

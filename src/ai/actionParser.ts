@@ -123,6 +123,10 @@ function parseBrowserAction(raw: unknown): BrowserAction {
       if (!selector) return unknown('Focus action missing a selector.')
       return { type: ActionType.FOCUS_ELEMENT, selector, label }
     }
+    case ActionType.REPEAT_LAST: {
+      const message = stringField(raw, 'message') ?? ''
+      return { type: ActionType.REPEAT_LAST, message }
+    }
     case ActionType.UNKNOWN: {
       const reason = stringField(raw, 'reason') ?? 'Unrecognized command.'
       return { type: ActionType.UNKNOWN, reason }

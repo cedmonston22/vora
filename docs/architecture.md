@@ -11,6 +11,9 @@ Chrome extensions run in isolated contexts that communicate via `chrome.runtime`
 │  - Owns voice I/O (Web Speech API recognition + TTS)    │
 │  - Owns the runtime state machine and activation toggle │
 │  - Renders status, activation, command history, settings│
+│  - Settings: API key, language/locale, voice, rate,     │
+│    volume — all persisted to chrome.storage.local       │
+│  - Tracks lastReadback for "repeat that" support        │
 │  - Sends: VOICE_COMMAND_RECEIVED, ACTION_EXECUTE,       │
 │          STATE_CHANGE, TRANSCRIPT_UPDATE, HISTORY_ENTRY │
 └────────────────────┬────────────────────────────────────┘
@@ -22,6 +25,7 @@ Chrome extensions run in isolated contexts that communicate via `chrome.runtime`
 │  - Requests DOM context from the active tab             │
 │  - Falls back to chrome.scripting.executeScript when    │
 │    the content script is not yet present on the tab     │
+│  - Passes cmd.lastReadback to buildPrompt()             │
 │  - Calls claudeClient.callClaude → actionParser         │
 └──────┬──────────────────────────────────┬───────────────┘
        │ chrome.tabs.sendMessage           │ fetch (host_permissions)
@@ -47,14 +51,19 @@ Partial transcripts → broadcast TRANSCRIPT_UPDATE to active tab → in-page pa
    ↓
 Final transcript → if confidence < 0.7, TTS rephrase prompt, restart listening
    ↓
-Side panel sends VOICE_COMMAND_RECEIVED to service worker
+Side panel attaches lastReadback to VoiceCommand payload, sends VOICE_COMMAND_RECEIVED to service worker
    ↓
 Service worker requests DOM context from active tab content script
    (auto-injects content script via chrome.scripting if needed)
    ↓
+Service worker calls buildPrompt(transcript, context, lastReadback)
+   ↓
 Service worker calls Claude (10s soft timeout, 15s hard)
    ↓
 actionParser → ParsedIntent { action, readbackText, confirmationText? }
+   ↓
+If action is REPEAT_LAST:
+   side panel re-speaks lastReadback directly — no DOM execution
    ↓
 If destructive (SUBMIT_FORM or click on destructive label):
    side panel TTS reads confirmationText
@@ -64,7 +73,7 @@ Side panel sends ACTION_EXECUTE to active tab content script
    ↓
 Content script executes on live DOM, returns ActionResult
    ↓
-Side panel TTS reads back result, restarts listening
+Side panel TTS reads back result, stores it as lastReadback, restarts listening
 ```
 
 ## Why the State Machine Lives in the Side Panel, Not the Service Worker
@@ -86,3 +95,5 @@ The service worker is therefore a stateless RPC layer that handles the AI pipeli
 - **Native fetch only** — no HTTP client libraries to keep the bundle lean.
 - **Type guards over Zod** — keeps bundle size down for the extension context.
 - **`anthropic-dangerous-direct-browser-access: true` header** — lets the extension call the Claude API directly without a server. Combined with `host_permissions: ["https://api.anthropic.com/*"]` in the manifest, this gives the service worker direct fetch access.
+- **VoiceSettings consolidated in App.tsx** — rate, volume, voiceName, and locale are stored as a single `VoiceSettings` object, loaded from `chrome.storage.local` on mount, and passed as `SpeakOptions` to every `speak()` call. Changing locale resets the voice selection to avoid mismatched voice/language pairs.
+- **"Repeat that" via lastReadback** — the side panel stores the last successful TTS readback in a ref. It is attached to every `VoiceCommand` payload sent to the service worker, which passes it to `buildPrompt()` as a third argument. Claude returns `REPEAT_LAST` with the message field populated; the side panel intercepts it before the content script is ever involved.

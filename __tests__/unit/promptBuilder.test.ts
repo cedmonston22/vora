@@ -81,4 +81,19 @@ describe('promptBuilder', () => {
     // Should be truncated — user message should not contain 5000 a's
     expect(user.length).toBeLessThan(10000)
   })
+
+  it('includes lastReadback in the user prompt when provided', () => {
+    const { user } = buildPrompt('repeat that', ctx, 'I clicked the Submit button.')
+    expect(user).toContain('Last Vora readback: "I clicked the Submit button."')
+  })
+
+  it('omits the lastReadback block when not provided', () => {
+    const { user } = buildPrompt('click submit', ctx)
+    expect(user).not.toContain('Last Vora readback')
+  })
+
+  it('includes REPEAT_LAST in the system prompt schema', () => {
+    const { system } = buildPrompt('x', ctx)
+    expect(system).toContain('REPEAT_LAST')
+  })
 })

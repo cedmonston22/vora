@@ -25,7 +25,7 @@ vora/
 │   │   │   ├── ActivationButton.tsx   <!-- Main mic on/off toggle -->
 │   │   │   ├── StatusIndicator.tsx    <!-- Listening / thinking / done states -->
 │   │   │   ├── CommandHistory.tsx     <!-- Last N commands and outcomes -->
-│   │   │   └── SettingsPanel.tsx      <!-- API key, voice speed, preferences -->
+│   │   │   └── SettingsPanel.tsx      <!-- API key, language, voice selection, rate, volume -->
 │   │   ├── hooks/
 │   │   │   └── useCommandHistory.ts   <!-- Tracks recent commands -->
 │   │   └── popup.css
@@ -37,8 +37,8 @@ vora/
 │   │   ├── promptBuilder.ts   <!-- Builds context-aware prompts -->
 │   │   └── actionParser.ts    <!-- Parses Claude response into actions -->
 │   ├── types/
-│   │   ├── actions.ts         <!-- BrowserAction, ActionType enums -->
-│   │   ├── commands.ts        <!-- VoiceCommand, ParsedIntent types -->
+│   │   ├── actions.ts         <!-- BrowserAction, ActionType enums (incl. REPEAT_LAST) -->
+│   │   ├── commands.ts        <!-- VoiceCommand (incl. lastReadback?), ParsedIntent types -->
 │   │   └── dom.ts             <!-- PageContext, DOMElement types -->
 │   └── utils/
 │       ├── constants.ts

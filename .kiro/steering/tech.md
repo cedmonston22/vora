@@ -45,6 +45,17 @@
 - Build-time constants (version, model name) defined in `utils/constants.ts`
 - No `.env` file — Chrome extensions have no server-side environment
 
+## Voice Settings Storage Keys
+
+All voice settings are persisted to `chrome.storage.local` and loaded on side panel mount:
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `vora_speech_rate` | `number` | `1.0` | TTS playback rate (0.5–1.5) |
+| `vora_speech_volume` | `number` | `1.0` | TTS volume (0.0–1.0) |
+| `vora_speech_voice` | `string` | `''` | `SpeechSynthesisVoice.name`, empty = system default |
+| `vora_speech_locale` | `string` | `'en-US'` | BCP-47 locale tag, filters voice list |
+
 ## Error Handling Philosophy
 
 - Every error has a category: `VoiceError`, `AIError`, `ExecutionError`, `NetworkError`
@@ -53,3 +64,18 @@
 - Claude API failures fall back to a canned TTS response, never a blank state
 - DOM action failures are caught individually — one failed action does not crash the session
 - All errors logged to console in development, stripped in demo build
+
+## speak() API
+
+`speak(text, rateOrOptions)` in `src/voice/speechSynthesis.ts` accepts either a plain `number` (rate, backward-compatible) or a `SpeakOptions` object:
+
+```ts
+type SpeakOptions = {
+  rate?: number     // 0.5–1.5, default 1.0
+  volume?: number   // 0.0–1.0, default 1.0
+  voiceName?: string // SpeechSynthesisVoice.name, undefined = system default
+  locale?: string   // BCP-47 tag e.g. 'en-US', 'fr-FR'
+}
+```
+
+All call sites in `App.tsx` pass the full `VoiceSettings` object. The plain-number overload is kept for backward compatibility in tests.

@@ -35,6 +35,9 @@ export async function executeAction(action: BrowserAction): Promise<ActionResult
         return readContent(action, action.selector)
       case ActionType.FOCUS_ELEMENT:
         return focusElement(action, action.selector, action.label)
+      case ActionType.REPEAT_LAST:
+        // Handled in the side panel before reaching the content script
+        return { success: true, action, message: action.message }
       case ActionType.UNKNOWN:
         return { success: false, action, message: action.reason }
     }

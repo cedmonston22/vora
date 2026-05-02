@@ -123,4 +123,29 @@ describe('actionParser', () => {
     }))
     expect(result.readbackText).toBe('Done.')
   })
+
+  it('parses REPEAT_LAST with a message', () => {
+    const json = JSON.stringify({
+      action: { type: 'REPEAT_LAST', message: 'I clicked the Submit button.' },
+      readback: 'Repeating last message.',
+    })
+    const intent = parseAction(json)
+    expect(intent.action.type).toBe(ActionType.REPEAT_LAST)
+    if (intent.action.type === ActionType.REPEAT_LAST) {
+      expect(intent.action.message).toBe('I clicked the Submit button.')
+    }
+    expect(intent.confirmationText).toBeUndefined()
+  })
+
+  it('parses REPEAT_LAST with an empty message gracefully', () => {
+    const json = JSON.stringify({
+      action: { type: 'REPEAT_LAST', message: '' },
+      readback: 'Repeating.',
+    })
+    const intent = parseAction(json)
+    expect(intent.action.type).toBe(ActionType.REPEAT_LAST)
+    if (intent.action.type === ActionType.REPEAT_LAST) {
+      expect(intent.action.message).toBe('')
+    }
+  })
 })

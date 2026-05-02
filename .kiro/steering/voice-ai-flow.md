@@ -26,8 +26,8 @@ This document defines the exact pipeline every voice command follows in Vora —
    └── User clicks the mic button in the side panel
    └── Side panel state sets to LISTENING
    └── Web Speech API recognition starts (in the side panel window context)
-   └── In-page status pill appears in bottom-right corner (Shadow DOM, no body shift)
-   └── Status pill shows "🎙 Listening"
+   └── In-page side panel appears, shifts host body margin-right by 340px
+   └── Status pill shows "Listening"
 
 2. VOICE CAPTURE
    └── Web Speech API captures continuous speech
@@ -46,6 +46,7 @@ This document defines the exact pipeline every voice command follows in Vora —
        - System prompt (Vora role, action schema, constraints)
        - Page context (sanitized DOM snapshot)
        - User command (raw transcript)
+       - Last TTS readback (optional, enables "repeat that" handling)
    └── Sends to Claude API via claudeClient.ts
 
 5. AI PROCESSING
@@ -61,7 +62,7 @@ This document defines the exact pipeline every voice command follows in Vora —
    └── Visual feedback only during AI processing
 
 7. CONFIRMATION (DESTRUCTIVE ACTIONS ONLY)
-   └── If action type is SUBMIT_FORM, or CLICK_ELEMENT on a destructive label (delete, send, pay, etc.):
+   └── If action type is SUBMIT_FORM, CLICK_SEND, CLICK_DELETE, CLICK_PAY:
        - TTS reads back: "I'm about to [action]. Say yes to confirm."
        - Recognition restarts, listens for yes/no
        - Yes → proceed, No → cancel and return to LISTENING
@@ -69,7 +70,9 @@ This document defines the exact pipeline every voice command follows in Vora —
 
 8. EXECUTION
    └── actionExecutor.ts receives typed BrowserAction
-   └── Executes action on live page DOM
+   └── REPEAT_LAST is handled in the side panel before reaching the content script
+       — re-speaks the last readback without any DOM interaction
+   └── All other actions execute on live page DOM
    └── Each action wrapped in try/catch
    └── On success → step 9
    └── On failure → ERROR HANDLING
@@ -78,6 +81,7 @@ This document defines the exact pipeline every voice command follows in Vora —
    └── TTS confirms what was done in plain English
    └── Example: "Done. I clicked the Submit button."
    └── Visual overlay updates to "Done"
+   └── Last readback is stored in the side panel for "repeat that" support
    └── After TTS completes, recognition automatically restarts
    └── Vora returns to LISTENING state without requiring re-activation
 
@@ -131,3 +135,5 @@ The state machine lives in the side panel React app, not the service worker, bec
 - Claude API must never be called without a sanitized page context
 - Destructive actions must never execute without voice confirmation
 - A failed action must never leave the extension in a broken state — always return to LISTENING
+- REPEAT_LAST must never trigger DOM execution — it is handled entirely in the side panel
+- lastReadback must be passed from App.tsx through VoiceCommand to buildPrompt — never reconstructed or guessed
