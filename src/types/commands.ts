@@ -10,6 +10,8 @@ export const MSG = {
   DOM_CONTEXT_RESPONSE: 'DOM_CONTEXT_RESPONSE',
   CONFIRMATION_RESPONSE: 'CONFIRMATION_RESPONSE',
   WAKE_WORD_DETECTED: 'WAKE_WORD_DETECTED',
+  TRANSCRIPT_UPDATE: 'TRANSCRIPT_UPDATE',
+  HISTORY_ENTRY: 'HISTORY_ENTRY',
 } as const
 
 export type MsgType = (typeof MSG)[keyof typeof MSG]
@@ -46,8 +48,10 @@ export type ExtensionMessage =
   | { type: typeof MSG.VOICE_COMMAND_RECEIVED; payload: VoiceCommand }
   | { type: typeof MSG.ACTION_EXECUTE; payload: BrowserAction }
   | { type: typeof MSG.ACTION_RESULT; payload: { success: boolean; message: string } }
-  | { type: typeof MSG.STATE_CHANGE; payload: { state: ExtensionState } }
+  | { type: typeof MSG.STATE_CHANGE; payload: { state: ExtensionState; message?: string } }
   | { type: typeof MSG.DOM_CONTEXT_REQUEST }
   | { type: typeof MSG.DOM_CONTEXT_RESPONSE; payload: import('./dom').PageContext }
   | { type: typeof MSG.CONFIRMATION_RESPONSE; payload: { confirmed: boolean } }
   | { type: typeof MSG.WAKE_WORD_DETECTED }
+  | { type: typeof MSG.TRANSCRIPT_UPDATE; payload: { partial: string } }
+  | { type: typeof MSG.HISTORY_ENTRY; payload: CommandHistoryEntry }

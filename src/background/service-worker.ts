@@ -16,6 +16,13 @@ type ServiceResult =
   | { ok: true; intent: ParsedIntent }
   | { ok: false; error: string }
 
+chrome.runtime.onInstalled.addListener(() => {
+  // Make clicking the extension icon open the side panel instead of a popup.
+  chrome.sidePanel
+    .setPanelBehavior({ openPanelOnActionClick: true })
+    .catch((err) => console.error('[vora-sw] sidePanel.setPanelBehavior failed:', err))
+})
+
 chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendResponse) => {
   if (message.type !== MSG.VOICE_COMMAND_RECEIVED) return false
   void handleVoiceCommand(message.payload, sender).then(sendResponse)
@@ -80,19 +87,53 @@ async function pickTargetTabId(
 }
 
 async function requestContext(tabId: number): Promise<PageContext | null> {
+  const send = async (): Promise<unknown> =>
+    chrome.tabs.sendMessage(tabId, { type: MSG.DOM_CONTEXT_REQUEST })
+
+  let res: unknown
   try {
-    const res = await chrome.tabs.sendMessage(tabId, { type: MSG.DOM_CONTEXT_REQUEST })
-    if (
-      res &&
-      typeof res === 'object' &&
-      'type' in res &&
-      (res as { type: string }).type === MSG.DOM_CONTEXT_RESPONSE
-    ) {
-      return (res as { payload: PageContext }).payload
+    res = await send()
+  } catch (err) {
+    console.warn('[vora-sw] no content script on tab, attempting inject:', err)
+    const injected = await tryInject(tabId)
+    if (!injected) return null
+    try {
+      res = await send()
+    } catch (err2) {
+      console.error('[vora-sw] still failed after inject:', err2)
+      return null
     }
-    return null
-  } catch {
-    return null
+  }
+
+  if (
+    res &&
+    typeof res === 'object' &&
+    'type' in res &&
+    (res as { type: string }).type === MSG.DOM_CONTEXT_RESPONSE
+  ) {
+    return (res as unknown as { payload: PageContext }).payload
+  }
+  console.warn('[vora-sw] unexpected response shape:', res)
+  return null
+}
+
+async function tryInject(tabId: number): Promise<boolean> {
+  const manifest = chrome.runtime.getManifest()
+  const files = manifest.content_scripts?.[0]?.js
+  if (!files || files.length === 0) {
+    console.error('[vora-sw] no content_scripts.js declared in manifest')
+    return false
+  }
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files,
+    })
+    console.log('[vora-sw] injected content script into tab', tabId, files)
+    return true
+  } catch (err) {
+    console.error('[vora-sw] could not inject content script:', err)
+    return false
   }
 }
 

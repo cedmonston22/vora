@@ -4,16 +4,19 @@
 
 | Layer | Technology | Notes |
 |---|---|---|
-| Extension Framework | Chrome Extension Manifest V3 | Service workers, content scripts, popup |
-| Popup UI | React 18 + TypeScript | Only used in popup context |
-| Styling | Tailwind CSS | Popup UI only, not injected into host pages |
-| Voice Input | Web Speech API | Built into Chrome, no external dependency |
+| Extension Framework | Chrome Extension Manifest V3 | Service workers, content scripts, side panel |
+| UI Surface | Chrome Side Panel API | Persistent panel pinned to right edge of browser |
+| Side Panel UI | React 18 + TypeScript | Same React bundle, runs in `chrome.sidePanel` context |
+| Styling | Tailwind CSS | Side panel UI only, not injected into host pages |
+| In-page overlay | Vanilla TS + Shadow DOM | Live transcript panel injected into host page during a session |
+| Voice Input | Web Speech API | Built into Chrome, runs in side panel window context |
 | Voice Output | Web Speech Synthesis API | Built into Chrome, TTS readback |
 | AI / Intent | Anthropic Claude API (claude-sonnet-4-6) | Natural language to browser action |
+| AI access | `anthropic-dangerous-direct-browser-access: true` | Direct browser fetch with `host_permissions` declared |
 | Build Tool | Vite + CRXJS | Bundles extension with HMR support |
 | Type Checking | TypeScript 5 strict mode | Across all contexts |
-| Testing | Vitest | Unit and integration tests |
-| Deployment | Chrome Web Store / Local unpacked | Demo via unpacked load |
+| Testing | Vitest with jsdom | Unit and integration tests |
+| Deployment | Local unpacked | Loaded via `chrome://extensions` for demo |
 
 ## Package Preferences
 

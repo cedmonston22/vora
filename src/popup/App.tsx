@@ -61,29 +61,53 @@ export default function App(): React.ReactElement {
     })
   }, [])
 
-  const broadcastState = useCallback(async (state: ExtensionState): Promise<void> => {
+  const sendToTab = useCallback(async (msg: ExtensionMessage): Promise<void> => {
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
       if (tab?.id == null) return
-      const msg: ExtensionMessage = { type: MSG.STATE_CHANGE, payload: { state } }
       await chrome.tabs.sendMessage(tab.id, msg).catch(() => undefined)
     } catch {
       // ignore — overlay is best-effort
     }
   }, [])
 
+  const broadcastState = useCallback(
+    async (state: ExtensionState, message?: string): Promise<void> => {
+      const payload = message !== undefined ? { state, message } : { state }
+      await sendToTab({ type: MSG.STATE_CHANGE, payload })
+    },
+    [sendToTab],
+  )
+
+  const broadcastPartial = useCallback(
+    async (partial: string): Promise<void> => {
+      await sendToTab({ type: MSG.TRANSCRIPT_UPDATE, payload: { partial } })
+    },
+    [sendToTab],
+  )
+
+  const broadcastHistory = useCallback(
+    async (entry: import('../types/commands').CommandHistoryEntry): Promise<void> => {
+      await sendToTab({ type: MSG.HISTORY_ENTRY, payload: entry })
+    },
+    [sendToTab],
+  )
+
   const enterListening = useCallback((): void => {
     if (!sessionActive.current) return
     dispatch({ type: 'state', state: 'LISTENING', message: 'Listening…' })
     void broadcastState('LISTENING')
+    void broadcastPartial('')
     try {
       startListening({
         onPartial: (text) => {
           console.log('[vora] partial:', text)
           dispatch({ type: 'message', message: `“${text}”` })
+          void broadcastPartial(text)
         },
         onFinal: (cmd) => {
           console.log('[vora] final:', cmd.transcript, 'confidence:', cmd.confidence)
+          void broadcastPartial(cmd.transcript)
           void runCommand(cmd)
         },
       })
@@ -91,10 +115,10 @@ export default function App(): React.ReactElement {
       const m = err instanceof Error ? err.message : 'Microphone unavailable.'
       dispatch({ type: 'state', state: 'ERROR', message: m })
       sessionActive.current = false
-      void broadcastState('ERROR')
+      void broadcastState('ERROR', m)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [broadcastState])
+  }, [broadcastState, broadcastPartial])
 
   const stopSession = useCallback((): void => {
     sessionActive.current = false
@@ -112,6 +136,14 @@ export default function App(): React.ReactElement {
     sessionActive.current = true
     enterListening()
   }, [enterListening, stopSession])
+
+  const recordHistory = useCallback(
+    (entry: import('../types/commands').CommandHistoryEntry): void => {
+      history.add(entry)
+      void broadcastHistory(entry)
+    },
+    [history, broadcastHistory],
+  )
 
   const runCommand = useCallback(
     async (cmd: VoiceCommand): Promise<void> => {
@@ -133,7 +165,7 @@ export default function App(): React.ReactElement {
       }
 
       dispatch({ type: 'state', state: 'THINKING', message: `"${cmd.transcript}"` })
-      void broadcastState('THINKING')
+      void broadcastState('THINKING', `"${cmd.transcript}"`)
       console.log('[vora] sending to service worker:', cmd.transcript)
 
       let intent: ParsedIntent
@@ -146,7 +178,7 @@ export default function App(): React.ReactElement {
         if (!res?.ok) {
           const err: string = res?.error ?? 'Something went wrong.'
           dispatch({ type: 'state', state: 'ERROR', message: err })
-          history.add({
+          recordHistory({
             transcript: cmd.transcript,
             readback: err,
             success: false,
@@ -160,7 +192,7 @@ export default function App(): React.ReactElement {
       } catch (err) {
         const m = err instanceof Error ? err.message : 'Background error.'
         dispatch({ type: 'state', state: 'ERROR', message: m })
-        history.add({
+        recordHistory({
           transcript: cmd.transcript,
           readback: m,
           success: false,
@@ -177,7 +209,7 @@ export default function App(): React.ReactElement {
         const confirmed = await getVoiceConfirmation(intent.confirmationText, rate)
         if (!confirmed) {
           await speak('Cancelled. What would you like to do?', rate)
-          history.add({
+          recordHistory({
             transcript: cmd.transcript,
             readback: 'Cancelled.',
             success: false,
@@ -210,7 +242,7 @@ export default function App(): React.ReactElement {
               ? intent.readbackText
               : execMessage
 
-        history.add({
+        recordHistory({
           transcript: cmd.transcript,
           readback: spoken,
           success: ok,
@@ -225,7 +257,7 @@ export default function App(): React.ReactElement {
         await speak(spoken, rate)
       } catch (err) {
         const m = err instanceof Error ? err.message : 'Execution error.'
-        history.add({
+        recordHistory({
           transcript: cmd.transcript,
           readback: m,
           success: false,
@@ -238,7 +270,7 @@ export default function App(): React.ReactElement {
 
       enterListening()
     },
-    [broadcastState, enterListening, history],
+    [broadcastState, enterListening, recordHistory],
   )
 
   const onRateChange = useCallback((r: number): void => {

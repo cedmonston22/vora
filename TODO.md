@@ -65,11 +65,20 @@ Files: `App.tsx`, `components/`, `hooks/`, `popup.css`, `index.html`, `index.tsx
 
 ## Integration (everyone together, last ~1 hour)
 
-- [ ] Wire Scope B (service worker) → Scope A (AI pipeline) → Scope C (executor) end-to-end
-- [ ] Wire Scope D (popup) state display to service worker state
-- [ ] Load unpacked extension in Chrome, run demo script from `docs/demo-script.md`
-- [ ] Fix any message passing issues between contexts
+- [x] Wire Scope B (service worker) → Scope A (AI pipeline) → Scope C (executor) end-to-end
+- [x] Wire Scope D (side panel) state display to runtime state
+- [x] Load unpacked extension in Chrome
+- [x] Side panel API for persistent UI on right edge of browser
+- [x] Auto-inject content script when not present on tab
+- [x] In-page side panel showing live transcript
+- [ ] Run demo script from `docs/demo-script.md` end-to-end without errors
 - [ ] Record 3-min demo video
+
+## Known MVP Gaps (deferred from spec)
+
+- Wake word "Hey Vora" is not implemented. Activation is a click on the mic in the side panel. The voice-ai-flow steering doc has been updated to reflect this and notes wake word as future work.
+- The runtime state machine lives in the side panel React app, not in the service worker, because Web Speech APIs require a window context.
+- The in-page side panel shifts host body margin-right by 340px. Sites with fixed-position elements on the right or `body { overflow: hidden }` may not visually shift.
 
 ---
 

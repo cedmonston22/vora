@@ -1,10 +1,13 @@
 import { readPageContext } from './domReader'
 import { executeAction } from './actionExecutor'
-import { showOverlay, hideOverlay } from './overlay'
+import { showOverlay, hideOverlay, setPartial, pushRecent } from './overlay'
 import { MSG } from '../types/commands'
 import type { ExtensionMessage } from '../types/commands'
 
+console.log('[vora-cs] content script loaded on', location.href)
+
 chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendResponse) => {
+  console.log('[vora-cs] received message:', message.type)
   switch (message.type) {
     case MSG.DOM_CONTEXT_REQUEST: {
       try {
@@ -30,9 +33,24 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
     }
 
     case MSG.STATE_CHANGE: {
-      const state = message.payload.state
-      if (state === 'IDLE') hideOverlay()
-      else showOverlay(state)
+      const { state, message: msg } = message.payload
+      if (state === 'IDLE') {
+        hideOverlay()
+      } else {
+        showOverlay(state, msg)
+      }
+      sendResponse({ ok: true })
+      return false
+    }
+
+    case MSG.TRANSCRIPT_UPDATE: {
+      setPartial(message.payload.partial)
+      sendResponse({ ok: true })
+      return false
+    }
+
+    case MSG.HISTORY_ENTRY: {
+      pushRecent(message.payload)
       sendResponse({ ok: true })
       return false
     }

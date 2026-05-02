@@ -4,23 +4,30 @@
 
 This document defines the exact pipeline every voice command follows in Vora — from user activation through execution and confirmation. Kiro must never generate code that breaks or bypasses this flow.
 
-## Activation
+## MVP Activation
 
-- User activates Vora by saying the wake word "Hey Vora"
-- Wake word detection runs continuously and passively in the background via the service worker
-- On wake word detected, the popup opens and listening session begins
-- The popup and page overlay display the current state: Idle → Listening → Thinking → Executing → Done
-- Wake word detection must be lightweight — it must not impact page performance
+- The user clicks the Vora icon to open the **side panel** (Chrome `sidePanel` API). The panel persists across tab switches.
+- The user clicks the mic button in the side panel to start a session.
+- Once active, recognition runs in continuous loop: capture command → process → execute → TTS readback → re-enter listening.
+- The session ends when the user clicks the mic again (Stop) or closes the side panel.
+- The side panel displays state: Idle → Listening → Thinking → Confirming (destructive only) → Executing → Listening.
+- The in-page side panel (Shadow DOM, injected by the content script) mirrors state and shows live transcripts.
+
+## Future: Wake Word Activation
+
+- Wake word "Hey Vora" is **not implemented in the MVP**.
+- Future work: add an offscreen document or persistent passive recognition layer that detects "Hey Vora" without requiring the side panel to be open. On detection, open the side panel and begin a listening session.
+- Wake word detection must be lightweight — it must not impact page performance.
 
 ## Step-by-Step Command Pipeline
 
 ```
-1. USER ACTIVATES
-   └── User says "Hey Vora"
-   └── Service worker detects wake word and triggers listening session
-   └── Popup opens automatically, state sets to LISTENING
-   └── Web Speech API recognition starts
-   └── Visual overlay appears on page showing "Listening..."
+1. USER ACTIVATES (MVP)
+   └── User clicks the mic button in the side panel
+   └── Side panel state sets to LISTENING
+   └── Web Speech API recognition starts (in the side panel window context)
+   └── In-page side panel appears, shifts host body margin-right by 340px
+   └── Status pill shows "Listening"
 
 2. VOICE CAPTURE
    └── Web Speech API captures continuous speech
@@ -108,10 +115,14 @@ This document defines the exact pipeline every voice command follows in Vora —
 ## State Machine
 
 ```
-WAKE WORD DETECTED → LISTENING → THINKING → CONFIRMING (destructive only) → EXECUTING → LISTENING
-                                                                                        ↓ (on error)
-                                                                                     LISTENING
+USER CLICKS MIC → LISTENING → THINKING → CONFIRMING (destructive only) → EXECUTING → LISTENING
+                                                                                    ↓ (on error)
+                                                                                 LISTENING
+
+USER CLICKS MIC AGAIN → IDLE (session ends)
 ```
+
+The state machine lives in the side panel React app, not the service worker, because Web Speech APIs require a window context and service workers terminate when idle. The service worker is a stateless RPC layer for the AI pipeline.
 
 ## Rules Kiro Must Never Break
 
