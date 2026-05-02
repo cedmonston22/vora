@@ -137,6 +137,54 @@ function pressKey(
   selector: string | undefined,
   label: string | undefined,
 ): ActionResult {
+  const normalized = normalizeKey(key)
+
+  // Media keys: drive the video element directly. Synthetic KeyboardEvents are
+  // marked isTrusted=false and players (YouTube, Vimeo, etc.) ignore them.
+  const video = findActiveVideo()
+  if (video) {
+    if (normalized === 'k' || normalized === ' ') {
+      if (video.paused) {
+        void video.play().catch(() => undefined)
+        return { success: true, action, message: 'Playing.' }
+      }
+      video.pause()
+      return { success: true, action, message: 'Paused.' }
+    }
+    if (normalized === 'm') {
+      video.muted = !video.muted
+      return { success: true, action, message: video.muted ? 'Muted.' : 'Unmuted.' }
+    }
+    if (normalized === 'j') {
+      video.currentTime = Math.max(0, video.currentTime - 10)
+      return { success: true, action, message: 'Rewound ten seconds.' }
+    }
+    if (normalized === 'l') {
+      video.currentTime = video.currentTime + 10
+      return { success: true, action, message: 'Forward ten seconds.' }
+    }
+    if (normalized === 'f') {
+      const v = video as HTMLVideoElement & {
+        webkitRequestFullscreen?: () => Promise<void>
+        mozRequestFullScreen?: () => Promise<void>
+      }
+      const req =
+        v.requestFullscreen?.bind(v) ??
+        v.webkitRequestFullscreen?.bind(v) ??
+        v.mozRequestFullScreen?.bind(v)
+      if (req) {
+        try {
+          void req()
+        } catch {
+          // ignore
+        }
+      }
+      return { success: true, action, message: 'Fullscreen.' }
+    }
+  }
+
+  // Generic key dispatch — fire on the document AND the focused element so
+  // global page listeners and form-level listeners both have a chance to catch.
   const target = selector
     ? pick(selector)
     : ((document.activeElement as HTMLElement | null) ?? document.body)
@@ -147,23 +195,40 @@ function pressKey(
       message: `I could not find an element to press ${key} on.`,
     }
   }
-  const normalized = normalizeKey(key)
   const code = guessCode(normalized)
   for (const type of ['keydown', 'keypress', 'keyup'] as const) {
-    target.dispatchEvent(
-      new KeyboardEvent(type, {
-        key: normalized,
-        code,
-        bubbles: true,
-        cancelable: true,
-      }),
-    )
+    const event = new KeyboardEvent(type, {
+      key: normalized,
+      code,
+      bubbles: true,
+      cancelable: true,
+    })
+    document.dispatchEvent(event)
+    target.dispatchEvent(event)
   }
   if (normalized === 'Enter' && target instanceof HTMLInputElement) {
     const form = target.closest('form')
     if (form) form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
   }
   return { success: true, action, message: label ? `${label}.` : `Pressed ${normalized}.` }
+}
+
+function findActiveVideo(): HTMLVideoElement | null {
+  const videos = Array.from(document.querySelectorAll<HTMLVideoElement>('video'))
+  if (videos.length === 0) return null
+  // Prefer the largest visible video — usually the main player.
+  let best: HTMLVideoElement | null = null
+  let bestArea = 0
+  for (const v of videos) {
+    const r = v.getBoundingClientRect()
+    if (r.width === 0 || r.height === 0) continue
+    const area = r.width * r.height
+    if (area > bestArea) {
+      bestArea = area
+      best = v
+    }
+  }
+  return best ?? videos[0] ?? null
 }
 
 function normalizeKey(k: string): string {
