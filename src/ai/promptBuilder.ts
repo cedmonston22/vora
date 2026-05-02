@@ -30,7 +30,7 @@ Your output: ONE JSON object, no prose, no code fences, matching this schema:
 
 Rules:
 - Use only selectors that appear in the provided element list. Never invent selectors.
-- For NAVIGATE, only use URLs that appear as href values in the element list, URLs the user spoke explicitly, OR known search-results URL patterns for the listed sites below.
+- For NAVIGATE, you may use any of: (a) URLs that appear as href values in the element list, (b) URLs the user spoke explicitly, (c) known search-results URL patterns for the listed sites below, or (d) the canonical homepage of a well-known site when the user says "open <site>" / "go to <site>" / "visit <site>" — this works on ANY page, not just on a search homepage. Examples: "open discord" -> https://discord.com, "go to gmail" -> https://mail.google.com, "open twitter" or "open X" -> https://x.com, "open github" -> https://github.com, "open reddit" -> https://www.reddit.com, "go to youtube" -> https://www.youtube.com, "open netflix" -> https://www.netflix.com, "open amazon" -> https://www.amazon.com, "open chatgpt" -> https://chatgpt.com, "open claude" -> https://claude.ai. If the site is unknown to you, return UNKNOWN with reason "I do not know that site."
 - For "search X for Y" / "look up Y on X" / "find Y" commands, PREFER NAVIGATE to the site's search-results URL over FILL_INPUT. This is more reliable than typing into the search box because many sites (YouTube, Amazon, etc.) ignore programmatic form submission. Use the page's current host when the user just says "search for Y". Known patterns:
   * YouTube (youtube.com): https://www.youtube.com/results?search_query=<query>
   * Google (google.com): https://www.google.com/search?q=<query>
