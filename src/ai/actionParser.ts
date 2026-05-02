@@ -135,6 +135,32 @@ function parseBrowserAction(raw: unknown): BrowserAction {
       const message = stringField(raw, 'message') ?? ''
       return { type: ActionType.REPEAT_LAST, message }
     }
+    case ActionType.OPEN_TAB: {
+      const url = stringField(raw, 'url')
+      if (!url) return unknown('Open-tab action missing a URL.')
+      try {
+        new URL(url)
+      } catch {
+        return unknown('Open-tab URL is not valid.')
+      }
+      return { type: ActionType.OPEN_TAB, url }
+    }
+    case ActionType.CLOSE_TAB: {
+      const tabId = numberField(raw, 'tabId')
+      const label = stringField(raw, 'label')
+      const close: { type: ActionType.CLOSE_TAB; tabId?: number; label?: string } = {
+        type: ActionType.CLOSE_TAB,
+      }
+      if (tabId !== undefined) close.tabId = tabId
+      if (label !== undefined) close.label = label
+      return close
+    }
+    case ActionType.SWITCH_TAB: {
+      const tabId = numberField(raw, 'tabId')
+      const label = stringField(raw, 'label') ?? ''
+      if (tabId === undefined) return unknown('Switch-tab action missing a tabId.')
+      return { type: ActionType.SWITCH_TAB, tabId, label }
+    }
     case ActionType.UNKNOWN: {
       const reason = stringField(raw, 'reason') ?? 'Unrecognized command.'
       return { type: ActionType.UNKNOWN, reason }

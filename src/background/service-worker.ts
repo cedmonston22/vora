@@ -3,7 +3,9 @@ import type {
   ExtensionMessage,
   VoiceCommand,
   ParsedIntent,
+  TabInfo,
 } from '../types/commands'
+import type { BrowserAction } from '../types/actions'
 import { MSG } from '../types/commands'
 import { ActionType } from '../types/actions'
 import { buildPrompt, buildRestrictedPrompt } from '../ai/promptBuilder'
@@ -50,8 +52,58 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
     void handleBackgroundNavigate(message.payload.url, sender).then(sendResponse)
     return true
   }
+  if (message.type === MSG.BACKGROUND_TAB_ACTION) {
+    void handleTabAction(message.payload, sender).then(sendResponse)
+    return true
+  }
   return false
 })
+
+async function handleTabAction(
+  action: BrowserAction,
+  sender: chrome.runtime.MessageSender,
+): Promise<{ success: boolean; message: string }> {
+  try {
+    if (action.type === ActionType.OPEN_TAB) {
+      if (!/^https?:\/\//i.test(action.url)) {
+        return { success: false, message: 'Refusing to open a non-http(s) URL.' }
+      }
+      await chrome.tabs.create({ url: action.url, active: true })
+      return { success: true, message: `Opened ${action.url} in a new tab.` }
+    }
+
+    if (action.type === ActionType.CLOSE_TAB) {
+      const tabId =
+        action.tabId !== undefined ? action.tabId : await pickTargetTabId(sender)
+      if (tabId == null) return { success: false, message: 'No tab to close.' }
+      await chrome.tabs.remove(tabId)
+      return {
+        success: true,
+        message: action.label ? `Closed ${action.label}.` : 'Closed the tab.',
+      }
+    }
+
+    if (action.type === ActionType.SWITCH_TAB) {
+      const tab = await chrome.tabs.get(action.tabId).catch(() => null)
+      if (!tab) {
+        return { success: false, message: `Tab ${action.tabId} is no longer open.` }
+      }
+      await chrome.tabs.update(action.tabId, { active: true })
+      if (tab.windowId != null) {
+        await chrome.windows.update(tab.windowId, { focused: true }).catch(() => undefined)
+      }
+      return { success: true, message: `Switched to ${action.label || 'that tab'}.` }
+    }
+
+    return { success: false, message: 'Unsupported tab action.' }
+  } catch (err) {
+    console.error('[vora-sw] tab action failed:', err)
+    return {
+      success: false,
+      message: err instanceof Error ? err.message : 'Tab action failed.',
+    }
+  }
+}
 
 async function handleBackgroundNavigate(
   url: string,
@@ -98,10 +150,12 @@ async function handleVoiceCommand(
       return { ok: false, error: 'I could not read this page. Try refreshing the tab.' }
     }
 
+    const tabs = await collectOpenTabs()
+
     const { system, user } =
       ctxResult.kind === 'restricted'
-        ? buildRestrictedPrompt(cmd.transcript, cmd.lastReadback)
-        : buildPrompt(cmd.transcript, ctxResult.context, cmd.lastReadback)
+        ? buildRestrictedPrompt(cmd.transcript, tabs, cmd.lastReadback)
+        : buildPrompt(cmd.transcript, ctxResult.context, tabs, cmd.lastReadback)
     console.log('[vora-sw] calling Claude…')
     const raw = await callClaude({ system, user, apiKey })
     console.log('[vora-sw] Claude raw response:', raw)
@@ -113,16 +167,19 @@ async function handleVoiceCommand(
     }
 
     if (ctxResult.kind === 'restricted') {
-      // From a restricted page only NAVIGATE (and REPEAT_LAST) make sense.
-      // Anything else means the model ignored the prompt — surface a clear error.
-      if (
-        intent.action.type !== ActionType.NAVIGATE &&
-        intent.action.type !== ActionType.REPEAT_LAST
-      ) {
+      // From a restricted page only DOM-free actions make sense.
+      const allowed = new Set<ActionType>([
+        ActionType.NAVIGATE,
+        ActionType.OPEN_TAB,
+        ActionType.CLOSE_TAB,
+        ActionType.SWITCH_TAB,
+        ActionType.REPEAT_LAST,
+      ])
+      if (!allowed.has(intent.action.type)) {
         return {
           ok: false,
           error:
-            "I can only navigate from this page. Try saying 'go to' or 'search for'.",
+            "I can only navigate or switch tabs from this page. Try 'go to', 'search for', or 'switch to'.",
         }
       }
       return { ok: true, intent, restricted: true }
@@ -139,6 +196,23 @@ async function handleVoiceCommand(
       ok: false,
       error: err instanceof Error ? err.message : 'Something went wrong.',
     }
+  }
+}
+
+async function collectOpenTabs(): Promise<TabInfo[]> {
+  try {
+    const raw = await chrome.tabs.query({ currentWindow: true })
+    return raw
+      .filter((t) => t.id != null)
+      .map((t) => ({
+        id: t.id as number,
+        title: t.title ?? '',
+        url: t.url ?? t.pendingUrl ?? '',
+        active: t.active === true,
+      }))
+  } catch (err) {
+    console.warn('[vora-sw] failed to query tabs:', err)
+    return []
   }
 }
 

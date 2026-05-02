@@ -29,41 +29,41 @@ const ctx: PageContext = {
 
 describe('buildPrompt', () => {
   it('includes the user transcript verbatim', () => {
-    const { user } = buildPrompt('click submit', ctx)
+    const { user } = buildPrompt('click submit', ctx, [])
     expect(user).toContain('click submit')
   })
 
   it('includes every element selector in the user prompt', () => {
-    const { user } = buildPrompt('x', ctx)
+    const { user } = buildPrompt('x', ctx, [])
     expect(user).toContain('#submit')
     expect(user).toContain('input[name=email]')
   })
 
   it('includes the page title and URL', () => {
-    const { user } = buildPrompt('x', ctx)
+    const { user } = buildPrompt('x', ctx, [])
     expect(user).toContain('Example')
     expect(user).toContain('https://example.com/page')
   })
 
   it('includes the JSON-only output rule in the system prompt', () => {
-    const { system } = buildPrompt('x', ctx)
+    const { system } = buildPrompt('x', ctx, [])
     expect(system.toLowerCase()).toContain('json')
     expect(system).toContain('UNKNOWN')
   })
 
   it('forbids filling sensitive fields in the system prompt', () => {
-    const { system } = buildPrompt('x', ctx)
+    const { system } = buildPrompt('x', ctx, [])
     expect(system.toLowerCase()).toContain('password')
   })
 
   it('omits headings and visible text to keep the prompt small', () => {
-    const { user } = buildPrompt('x', ctx)
+    const { user } = buildPrompt('x', ctx, [])
     expect(user).not.toContain('Welcome')
     expect(user).not.toContain('Some short page text.')
   })
 
   it('system prompt mentions the merged action types', () => {
-    const { system } = buildPrompt('test', ctx)
+    const { system } = buildPrompt('test', ctx, [])
     expect(system).toContain('SELECT_OPTION')
     expect(system).toContain('PRESS_KEY')
     expect(system).toContain('CLEAR_INPUT')
@@ -71,12 +71,12 @@ describe('buildPrompt', () => {
   })
 
   it('includes lastReadback in the user prompt when provided', () => {
-    const { user } = buildPrompt('repeat that', ctx, 'I clicked the Submit button.')
+    const { user } = buildPrompt('repeat that', ctx, [], 'I clicked the Submit button.')
     expect(user).toContain('Last Vora readback: "I clicked the Submit button."')
   })
 
   it('omits the lastReadback block when not provided', () => {
-    const { user } = buildPrompt('click submit', ctx)
+    const { user } = buildPrompt('click submit', ctx, [])
     expect(user).not.toContain('Last Vora readback')
   })
 })

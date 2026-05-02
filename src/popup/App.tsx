@@ -465,7 +465,19 @@ export default function App(): React.ReactElement {
         if (tab?.id == null) throw new Error('No active tab.')
         let execSuccess: boolean
         let execMessageRaw: string
-        if (restricted && intent.action.type === ActionType.NAVIGATE) {
+        const isTabAction =
+          intent.action.type === ActionType.OPEN_TAB ||
+          intent.action.type === ActionType.CLOSE_TAB ||
+          intent.action.type === ActionType.SWITCH_TAB
+        if (isTabAction) {
+          // Tab management lives in the worker — content scripts can't manage tabs.
+          const tabRes = await chrome.runtime.sendMessage({
+            type: MSG.BACKGROUND_TAB_ACTION,
+            payload: intent.action,
+          })
+          execSuccess = tabRes?.success === true
+          execMessageRaw = typeof tabRes?.message === 'string' ? tabRes.message : ''
+        } else if (restricted && intent.action.type === ActionType.NAVIGATE) {
           // Content script can't run on the New Tab page or other chrome:// URLs,
           // so the service worker performs the navigation via chrome.tabs.update.
           const navRes = await chrome.runtime.sendMessage({
@@ -617,6 +629,12 @@ function describeAction(action: import('../types/actions').BrowserAction): strin
       return action.label ? action.label : `Press "${action.key}"`
     case ActionType.REPEAT_LAST:
       return 'Repeat last readback'
+    case ActionType.OPEN_TAB:
+      return `Open new tab to ${action.url}`
+    case ActionType.CLOSE_TAB:
+      return action.label ? `Close tab "${action.label}"` : 'Close current tab'
+    case ActionType.SWITCH_TAB:
+      return `Switch to "${action.label || 'tab'}"`
     case ActionType.UNKNOWN:
       return action.reason
   }

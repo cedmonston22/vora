@@ -13,7 +13,15 @@ export const MSG = {
   TRANSCRIPT_UPDATE: 'TRANSCRIPT_UPDATE',
   HISTORY_ENTRY: 'HISTORY_ENTRY',
   BACKGROUND_NAVIGATE: 'BACKGROUND_NAVIGATE',
+  BACKGROUND_TAB_ACTION: 'BACKGROUND_TAB_ACTION',
 } as const
+
+export type TabInfo = {
+  id: number
+  title: string
+  url: string
+  active: boolean
+}
 
 export type MsgType = (typeof MSG)[keyof typeof MSG]
 
@@ -58,3 +66,4 @@ export type ExtensionMessage =
   | { type: typeof MSG.TRANSCRIPT_UPDATE; payload: { partial: string } }
   | { type: typeof MSG.HISTORY_ENTRY; payload: CommandHistoryEntry }
   | { type: typeof MSG.BACKGROUND_NAVIGATE; payload: { url: string } }
+  | { type: typeof MSG.BACKGROUND_TAB_ACTION; payload: BrowserAction }

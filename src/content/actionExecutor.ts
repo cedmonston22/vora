@@ -44,6 +44,16 @@ export async function executeAction(action: BrowserAction): Promise<ActionResult
       case ActionType.REPEAT_LAST:
         // Handled in the side panel before reaching the content script.
         return { success: true, action, message: action.message }
+      case ActionType.OPEN_TAB:
+      case ActionType.CLOSE_TAB:
+      case ActionType.SWITCH_TAB:
+        // Tab actions are dispatched to the service worker; the content
+        // script should never receive them. Surface a clear message if it does.
+        return {
+          success: false,
+          action,
+          message: 'Tab action routed to the wrong layer.',
+        }
       case ActionType.UNKNOWN:
         return { success: false, action, message: action.reason }
     }

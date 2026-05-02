@@ -12,6 +12,9 @@ export enum ActionType {
   READ_CONTENT = 'READ_CONTENT',
   FOCUS_ELEMENT = 'FOCUS_ELEMENT',
   REPEAT_LAST = 'REPEAT_LAST',
+  OPEN_TAB = 'OPEN_TAB',
+  CLOSE_TAB = 'CLOSE_TAB',
+  SWITCH_TAB = 'SWITCH_TAB',
   UNKNOWN = 'UNKNOWN',
 }
 
@@ -40,6 +43,9 @@ export type BrowserAction =
   | { type: ActionType.READ_CONTENT; selector?: string }
   | { type: ActionType.FOCUS_ELEMENT; selector: string; label: string }
   | { type: ActionType.REPEAT_LAST; message: string }
+  | { type: ActionType.OPEN_TAB; url: string }
+  | { type: ActionType.CLOSE_TAB; tabId?: number; label?: string }
+  | { type: ActionType.SWITCH_TAB; tabId: number; label: string }
   | { type: ActionType.UNKNOWN; reason: string }
 
 export type ActionResult = {

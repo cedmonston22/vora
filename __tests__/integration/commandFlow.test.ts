@@ -22,7 +22,7 @@ const context: PageContext = {
 
 describe('command flow (integration)', () => {
   it('full pipeline: build prompt, mock Claude response, parse to action', () => {
-    const { user } = buildPrompt('open settings', context)
+    const { user } = buildPrompt('open settings', context, [])
     expect(user).toContain('#go')
 
     const fakeClaude = JSON.stringify({
