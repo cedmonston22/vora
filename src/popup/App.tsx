@@ -3,8 +3,12 @@ import { ActivationButton } from './components/ActivationButton'
 import { StatusIndicator } from './components/StatusIndicator'
 import { CommandHistory } from './components/CommandHistory'
 import { SettingsPanel } from './components/SettingsPanel'
+import { Visualizer } from './components/Visualizer'
+import { LiveTranscript } from './components/LiveTranscript'
+import { SpeakingHalo } from './components/SpeakingHalo'
 import type { VoiceSettings } from './components/SettingsPanel'
 import { useCommandHistory } from './hooks/useCommandHistory'
+import { useMicLevel } from './hooks/useMicLevel'
 import { startListening, stopListening } from '../voice/speechRecognition'
 import { speak, cancelSpeech } from '../voice/speechSynthesis'
 import { storageGet, stripWakeWord, editDistance } from '../utils/helpers'
@@ -27,16 +31,20 @@ import type {
   ExtensionMessage,
 } from '../types/commands'
 import { ActionType } from '../types/actions'
+import { matchTrigger, isCancelUtterance, isSkipUtterance } from '../workflows'
+import type { ActiveWorkflow, Workflow } from '../workflows'
 
 type SessionState = {
   state: ExtensionState
   message: string
+  transcript: string
   settings: VoiceSettings
 }
 
 type Reducer =
   | { type: 'state'; state: ExtensionState; message?: string }
   | { type: 'message'; message: string }
+  | { type: 'transcript'; text: string }
   | { type: 'settings'; patch: Partial<VoiceSettings> }
 
 function reducer(s: SessionState, a: Reducer): SessionState {
@@ -45,6 +53,8 @@ function reducer(s: SessionState, a: Reducer): SessionState {
       return { ...s, state: a.state, message: a.message ?? s.message }
     case 'message':
       return { ...s, message: a.message }
+    case 'transcript':
+      return { ...s, transcript: a.text }
     case 'settings':
       return { ...s, settings: { ...s.settings, ...a.patch } }
   }
@@ -61,13 +71,27 @@ export default function App(): React.ReactElement {
   const [session, dispatch] = useReducer(reducer, {
     state: 'IDLE',
     message: 'Tap the mic to start. Then say "Vora" before each command.',
+    transcript: '',
     settings: DEFAULT_SETTINGS,
   })
   const history = useCommandHistory()
   const [sessionOn, setSessionOn] = useState(false)
   const [alwaysOn, setAlwaysOn] = useState(false)
+  const [isSpeaking, setIsSpeaking] = useState(false)
+  // Increments on every TTS word boundary so SpeakingHalo can fire a fresh
+  // ripple in time with Vora's spoken cadence.
+  const [speakingPulse, setSpeakingPulse] = useState(0)
+  const onSpeakBoundary = useCallback((): void => {
+    setSpeakingPulse((n) => n + 1)
+  }, [])
+  // Real mic level drives the equalizer bars only when Vora is actively
+  // engaged — armed (within the wake window) or always-on. While passively
+  // waiting for the wake word the parallel mic stream is closed entirely so
+  // we aren't holding the mic open or reacting to ambient room sound.
+  // session.state is 'LISTENING' iff armed or always-on; 'IDLE' while passive.
+  const isActivelyListening = session.state === 'LISTENING' && !isSpeaking
+  const micLevel = useMicLevel(isActivelyListening)
   const alwaysOnRef = useRef(false)
-  const [learnedAliases, setLearnedAliases] = useState<string[]>([])
   const learnedRef = useRef<string[]>([])
   const sessionActive = useRef(false)
   const processingRef = useRef(false)
@@ -75,6 +99,19 @@ export default function App(): React.ReactElement {
   const settingsRef = useRef<VoiceSettings>(DEFAULT_SETTINGS)
   settingsRef.current = session.settings
   const ARMED_WINDOW_MS = 12000
+  // After a final segment, wait this long for additional speech before
+  // actually running the command. Resets on every new partial/final, so a
+  // natural mid-sentence pause won't cut the user off.
+  const SETTLE_MS = 1500
+  const pendingCommandRef = useRef('')
+  const pendingConfidenceRef = useRef(0)
+  const settleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Stable refs to settle helpers — populated once runCommand is defined
+  // below. Using refs lets the recognizer callbacks call them without a
+  // dependency cycle on runCommand.
+  const flushPendingRef = useRef<() => void>(() => {})
+  const scheduleSettleRef = useRef<() => void>(() => {})
+  const cancelSettleRef = useRef<() => void>(() => {})
 
   const captureCandidate = useCallback((transcript: string): void => {
     const lower = transcript.toLowerCase().trim()
@@ -87,12 +124,16 @@ export default function App(): React.ReactElement {
     if (learnedRef.current.includes(firstWord)) return
     const next = [...learnedRef.current, firstWord].slice(-10)
     learnedRef.current = next
-    setLearnedAliases(next)
     console.log('[vora] auto-learned wake alias:', firstWord, 'distance:', dist)
   }, [])
 
   // Track last readback for "repeat that" support
   const lastReadbackRef = useRef<string>('')
+
+  // Active multi-step workflow (e.g. composing a Gmail draft, scheduling a
+  // calendar event). When set, incoming transcripts are routed to the
+  // workflow's slot collector instead of the LLM action pipeline.
+  const workflowRef = useRef<ActiveWorkflow | null>(null)
 
   // Load persisted settings on mount
   useEffect(() => {
@@ -196,15 +237,24 @@ export default function App(): React.ReactElement {
     [sendToTab],
   )
 
-  const speakWithCurrentSettings = useCallback((text: string): Promise<void> => {
-    const s = settingsRef.current
-    return speak(text, {
-      rate: s.rate,
-      volume: s.volume,
-      voiceName: s.voiceName || undefined,
-      locale: s.locale,
-    })
-  }, [])
+  const speakWithCurrentSettings = useCallback(
+    async (text: string): Promise<void> => {
+      const s = settingsRef.current
+      setIsSpeaking(true)
+      try {
+        await speak(text, {
+          rate: s.rate,
+          volume: s.volume,
+          voiceName: s.voiceName || undefined,
+          locale: s.locale,
+          onBoundary: onSpeakBoundary,
+        })
+      } finally {
+        setIsSpeaking(false)
+      }
+    },
+    [onSpeakBoundary],
+  )
 
   const enterAlwaysOn = useCallback(async (): Promise<void> => {
     if (alwaysOnRef.current) return
@@ -245,6 +295,7 @@ export default function App(): React.ReactElement {
 
   const enterListening = useCallback((): void => {
     if (!sessionActive.current) return
+    dispatch({ type: 'transcript', text: '' })
     const armed = Date.now() < wakeArmedUntil.current
     if (alwaysOnRef.current) {
       dispatch({
@@ -284,9 +335,13 @@ export default function App(): React.ReactElement {
                 // long pauses or slow speech don't drop the utterance.
                 wakeArmedUntil.current = Date.now() + ARMED_WINDOW_MS
               }
-              dispatch({ type: 'state', state: 'LISTENING', message: `Active: “${text}”` })
+              dispatch({ type: 'state', state: 'LISTENING', message: 'Listening — go ahead.' })
+              dispatch({ type: 'transcript', text })
               void broadcastState('LISTENING')
               void broadcastPartial(text)
+              // User is still speaking — extend the settle window so a brief
+              // pause won't trigger an early flush.
+              if (pendingCommandRef.current) scheduleSettleRef.current()
             }
             return
           }
@@ -296,13 +351,16 @@ export default function App(): React.ReactElement {
               state: 'LISTENING',
               message: 'Active. Say a command.',
             })
+            dispatch({ type: 'transcript', text: '' })
             void broadcastState('LISTENING')
             void broadcastPartial('')
             return
           }
-          dispatch({ type: 'state', state: 'LISTENING', message: `Active: “${stripped}”` })
+          dispatch({ type: 'state', state: 'LISTENING', message: 'Listening — go ahead.' })
+          dispatch({ type: 'transcript', text: stripped })
           void broadcastState('LISTENING')
           void broadcastPartial(stripped)
+          if (pendingCommandRef.current) scheduleSettleRef.current()
         },
         onFinal: (cmd) => {
           console.log('[vora] final:', cmd.transcript, 'confidence:', cmd.confidence)
@@ -314,12 +372,14 @@ export default function App(): React.ReactElement {
           // always-on mode (where we still want "vora off" to stop).
           const toggle = stripped !== null ? parseSessionToggle(stripped) : null
           if (toggle === 'on') {
+            cancelSettleRef.current()
             wakeArmedUntil.current = 0
             void broadcastPartial('')
             void enterAlwaysOn()
             return
           }
           if (toggle === 'off') {
+            cancelSettleRef.current()
             wakeArmedUntil.current = 0
             void broadcastPartial('')
             void exitAlwaysOn()
@@ -342,13 +402,21 @@ export default function App(): React.ReactElement {
             void broadcastPartial('')
             return
           }
-          // Either wake-word + command, armed mode, or always-on mode picked
-          // up the command in this utterance.
+          // Accumulate this final into the pending command and schedule a
+          // settle. Mid-sentence pauses produce premature finals from the
+          // engine; the settle waits for true silence before running so we
+          // don't cut the user off.
           const command = stripped !== null ? stripped : cmd.transcript.trim()
-          wakeArmedUntil.current = 0
-          const wakedCmd: VoiceCommand = { ...cmd, transcript: command }
-          void broadcastPartial(command)
-          void runCommand(wakedCmd)
+          wakeArmedUntil.current = Date.now() + ARMED_WINDOW_MS
+          pendingCommandRef.current = pendingCommandRef.current
+            ? `${pendingCommandRef.current} ${command}`
+            : command
+          pendingConfidenceRef.current = Math.max(
+            pendingConfidenceRef.current,
+            cmd.confidence,
+          )
+          void broadcastPartial(pendingCommandRef.current)
+          scheduleSettleRef.current()
         },
         onError: (err) => {
           console.warn('[vora] recognition error:', err)
@@ -391,13 +459,17 @@ export default function App(): React.ReactElement {
     alwaysOnRef.current = false
     setAlwaysOn(false)
     wakeArmedUntil.current = 0
+    workflowRef.current = null
     stopListening()
     cancelSpeech()
+    cancelSettleRef.current()
+    setIsSpeaking(false)
     dispatch({
       type: 'state',
       state: 'IDLE',
       message: 'Tap the mic to start. Then say "Vora" before each command.',
     })
+    dispatch({ type: 'transcript', text: '' })
     void broadcastState('IDLE')
   }, [broadcastState])
 
@@ -424,13 +496,20 @@ export default function App(): React.ReactElement {
       if (!sessionActive.current) return
       const s = settingsRef.current
 
-      const speakWithSettings = (text: string): Promise<void> =>
-        speak(text, {
-          rate: s.rate,
-          volume: s.volume,
-          voiceName: s.voiceName || undefined,
-          locale: s.locale,
-        })
+      const speakWithSettings = async (text: string): Promise<void> => {
+        setIsSpeaking(true)
+        try {
+          await speak(text, {
+            rate: s.rate,
+            volume: s.volume,
+            voiceName: s.voiceName || undefined,
+            locale: s.locale,
+            onBoundary: onSpeakBoundary,
+          })
+        } finally {
+          setIsSpeaking(false)
+        }
+      }
 
       // Mark processing so the recognizer's onEnd does not flip us back to
       // IDLE between pipeline stages.
@@ -451,7 +530,170 @@ export default function App(): React.ReactElement {
         return
       }
 
+      // Workflow handling — multi-step guided dialogues (compose email, new
+      // calendar event). Active workflows route the transcript to the slot
+      // collector instead of the LLM. Trigger phrases start a workflow.
+      const activeWorkflow = workflowRef.current
+      const triggered: Workflow | null = activeWorkflow
+        ? null
+        : matchTrigger(cmd.transcript)
+
+      if (activeWorkflow || triggered) {
+        // Cancel mid-workflow.
+        if (activeWorkflow && isCancelUtterance(cmd.transcript)) {
+          workflowRef.current = null
+          dispatch({ type: 'state', state: 'IDLE', message: 'Cancelled.' })
+          void broadcastState('IDLE', 'Cancelled.')
+          await speakWithSettings('Cancelled.')
+          processingRef.current = false
+          enterListening()
+          return
+        }
+
+        // Start a new workflow on trigger phrase.
+        if (triggered) {
+          const wf: ActiveWorkflow = {
+            workflow: triggered,
+            slotIndex: 0,
+            values: {},
+          }
+          workflowRef.current = wf
+          const slot = triggered.slots[0]
+          const status = `${triggered.label}: ${slot.prompt}`
+          dispatch({ type: 'state', state: 'LISTENING', message: status })
+          void broadcastState('LISTENING', status)
+          await speakWithSettings(slot.prompt)
+          processingRef.current = false
+          enterListening()
+          return
+        }
+
+        // Continue an in-flight workflow: parse the answer for the current slot.
+        const wf = activeWorkflow as ActiveWorkflow
+        const slot = wf.workflow.slots[wf.slotIndex]
+        let value: string | null
+        if (slot.skippable && isSkipUtterance(cmd.transcript)) {
+          value = ''
+        } else if (slot.parse) {
+          value = slot.parse(cmd.transcript)
+        } else {
+          value = cmd.transcript.trim() || null
+        }
+
+        if (value === null) {
+          const reprompt =
+            slot.onParseFail ?? `Sorry, I didn't catch that. ${slot.prompt}`
+          dispatch({ type: 'state', state: 'LISTENING', message: reprompt })
+          void broadcastState('LISTENING', reprompt)
+          await speakWithSettings(reprompt)
+          processingRef.current = false
+          enterListening()
+          return
+        }
+
+        wf.values[slot.id] = value
+        wf.slotIndex += 1
+
+        if (wf.slotIndex < wf.workflow.slots.length) {
+          const next = wf.workflow.slots[wf.slotIndex]
+          const status = `${wf.workflow.label}: ${next.prompt}`
+          dispatch({ type: 'state', state: 'LISTENING', message: status })
+          void broadcastState('LISTENING', status)
+          await speakWithSettings(next.prompt)
+          processingRef.current = false
+          enterListening()
+          return
+        }
+
+        // All slots filled — confirm, then navigate to the prefilled URL.
+        let plan
+        try {
+          plan = wf.workflow.buildPlan(wf.values)
+        } catch (err) {
+          workflowRef.current = null
+          const m = err instanceof Error ? err.message : 'Could not build the plan.'
+          recordHistory({
+            transcript: wf.workflow.label,
+            readback: m,
+            success: false,
+            timestamp: Date.now(),
+          })
+          await speakWithSettings('Something went wrong putting that together.')
+          processingRef.current = false
+          enterListening()
+          return
+        }
+
+        dispatch({ type: 'state', state: 'CONFIRMING', message: plan.summary })
+        void broadcastState('CONFIRMING', plan.summary)
+        const confirmed = await getVoiceConfirmation(plan.summary, s)
+        if (!confirmed) {
+          workflowRef.current = null
+          recordHistory({
+            transcript: wf.workflow.label,
+            readback: 'Cancelled.',
+            success: false,
+            timestamp: Date.now(),
+          })
+          await speakWithSettings('Cancelled. What would you like to do?')
+          processingRef.current = false
+          enterListening()
+          return
+        }
+
+        workflowRef.current = null
+        const doing = `Opening ${wf.workflow.label}…`
+        dispatch({ type: 'state', state: 'EXECUTING', message: doing })
+        void broadcastState('EXECUTING', doing)
+
+        try {
+          const navRes = await chrome.runtime.sendMessage({
+            type: MSG.BACKGROUND_NAVIGATE,
+            payload: { url: plan.url },
+          })
+          const ok = navRes?.success === true
+          const message: string =
+            typeof navRes?.message === 'string' && navRes.message
+              ? navRes.message
+              : ok
+                ? `${wf.workflow.label} opened.`
+                : 'Could not open that page.'
+          if (ok) lastReadbackRef.current = message
+          recordHistory({
+            transcript: wf.workflow.label,
+            readback: message,
+            success: ok,
+            timestamp: Date.now(),
+          })
+          const resultPrefix = ok ? '✓ ' : '✗ '
+          dispatch({
+            type: 'state',
+            state: ok ? 'EXECUTING' : 'ERROR',
+            message: resultPrefix + message,
+          })
+          void broadcastState(ok ? 'EXECUTING' : 'ERROR', resultPrefix + message)
+          await speakWithSettings(message)
+          await sleep(400)
+        } catch (err) {
+          const m = err instanceof Error ? err.message : 'Navigation failed.'
+          recordHistory({
+            transcript: wf.workflow.label,
+            readback: m,
+            success: false,
+            timestamp: Date.now(),
+          })
+          dispatch({ type: 'state', state: 'ERROR', message: m })
+          void broadcastState('ERROR')
+          await speakWithSettings('Something went wrong.')
+        }
+
+        processingRef.current = false
+        enterListening()
+        return
+      }
+
       dispatch({ type: 'state', state: 'THINKING', message: `"${cmd.transcript}"` })
+      dispatch({ type: 'transcript', text: '' })
       void broadcastState('THINKING', `"${cmd.transcript}"`)
       console.log('[vora] sending to service worker:', cmd.transcript)
 
@@ -621,61 +863,111 @@ export default function App(): React.ReactElement {
       processingRef.current = false
       enterListening()
     },
-    [broadcastState, enterListening, recordHistory],
+    [broadcastState, enterListening, recordHistory, onSpeakBoundary],
   )
+
+  // Wire the settle helpers now that runCommand exists. Effect re-runs if
+  // runCommand identity changes; refs ensure recognizer callbacks always see
+  // the latest implementation without re-creating enterListening.
+  useEffect(() => {
+    flushPendingRef.current = (): void => {
+      const text = pendingCommandRef.current.trim()
+      const confidence = pendingConfidenceRef.current
+      pendingCommandRef.current = ''
+      pendingConfidenceRef.current = 0
+      if (settleTimerRef.current !== null) {
+        clearTimeout(settleTimerRef.current)
+        settleTimerRef.current = null
+      }
+      if (!text) return
+      wakeArmedUntil.current = 0
+      const cmd: VoiceCommand = { transcript: text, confidence, timestamp: Date.now() }
+      void runCommand(cmd)
+    }
+    scheduleSettleRef.current = (): void => {
+      if (settleTimerRef.current !== null) clearTimeout(settleTimerRef.current)
+      settleTimerRef.current = setTimeout(() => flushPendingRef.current(), SETTLE_MS)
+    }
+    cancelSettleRef.current = (): void => {
+      if (settleTimerRef.current !== null) {
+        clearTimeout(settleTimerRef.current)
+        settleTimerRef.current = null
+      }
+      pendingCommandRef.current = ''
+      pendingConfidenceRef.current = 0
+    }
+  }, [runCommand])
 
   const onSettingsChange = useCallback((patch: Partial<VoiceSettings>): void => {
     dispatch({ type: 'settings', patch })
   }, [])
 
+  const visualizerMode: 'idle' | 'listening' = session.state === 'LISTENING' && !isSpeaking
+    ? 'listening'
+    : 'idle'
+  const heroActive = isSpeaking || visualizerMode === 'listening'
+
   return (
-    <main className="flex min-h-[28rem] w-80 flex-col gap-3 bg-white p-4 text-slate-900">
-      <header>
+    <main className="flex min-h-[32rem] w-[22rem] flex-col gap-4 bg-gradient-to-b from-mist via-white to-white p-5 text-stone-900">
+      <header className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <h1 className="text-lg font-semibold">Vora</h1>
-          {alwaysOn && (
-            <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-emerald-700">
-              Always-on
-            </span>
-          )}
+          <span
+            aria-hidden
+            className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-vora-500 to-vora-700 text-white shadow-sm"
+          >
+            <span className="text-xs font-bold">V</span>
+          </span>
+          <h1 className="text-lg font-semibold tracking-tight">Vora</h1>
         </div>
-        <p className="text-xs text-slate-500">Voice control for any website.</p>
+        {alwaysOn && (
+          <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-700">
+            Always-on
+          </span>
+        )}
       </header>
 
-      <section className="flex flex-1 flex-col items-center justify-center gap-3 py-2">
-        <ActivationButton isActive={sessionOn} onToggle={onToggle} />
-        <StatusIndicator state={session.state} />
-        <p className="min-h-[2.5rem] max-w-[16rem] text-center text-sm text-slate-600">
-          {session.message}
-        </p>
+      {/* Hero: V logo + halo + visualizer + live transcript */}
+      <section
+        className={[
+          'relative flex flex-col items-center gap-5 rounded-2xl px-5 py-7',
+          'bg-white/80 ring-1 ring-stone-200/70 backdrop-blur-sm',
+          'shadow-[0_8px_30px_rgba(123,44,191,0.08)] transition-shadow duration-300',
+          heroActive && 'shadow-[0_8px_40px_rgba(123,44,191,0.18)]',
+        ]
+          .filter(Boolean)
+          .join(' ')}
+      >
+        <div className="relative z-10 flex w-full flex-col items-center gap-5">
+          {/* Logo + speaking aura — bigger wrapper so the blobs have room to
+              radiate outward without being clipped */}
+          <div className="relative flex h-40 w-40 items-center justify-center">
+            <SpeakingHalo active={isSpeaking} pulseTrigger={speakingPulse} />
+            <ActivationButton isActive={sessionOn} onToggle={onToggle} />
+          </div>
+
+          {/* Visualizer is always present so the user's bars never disappear */}
+          <Visualizer mode={visualizerMode} getLevel={micLevel.getLevel} />
+
+          <LiveTranscript text={session.transcript} state={session.state} />
+          <div className="flex flex-col items-center gap-1.5">
+            <StatusIndicator state={session.state} />
+            <p className="min-h-[1rem] max-w-[18rem] text-center text-xs text-stone-500">
+              {session.message}
+            </p>
+          </div>
+        </div>
       </section>
 
-      {learnedAliases.length > 0 && (
-        <section className="border-t border-slate-100 pt-2">
-          <h2 className="mb-1 px-1 text-xs font-medium uppercase tracking-wide text-slate-500">
-            Learned wake words
+      {history.entries.length > 0 && (
+        <section className="rounded-xl bg-white/60 p-3 ring-1 ring-stone-200/60">
+          <h2 className="mb-2 px-1 text-[10px] font-semibold uppercase tracking-wider text-stone-500">
+            Recent
           </h2>
-          <div className="flex flex-wrap gap-1 px-1">
-            {learnedAliases.map((w) => (
-              <span
-                key={w}
-                className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-700"
-              >
-                {w}
-              </span>
-            ))}
-          </div>
+          <CommandHistory entries={history.entries} />
         </section>
       )}
 
-      <section className="border-t border-slate-100 pt-2">
-        <h2 className="mb-1 px-1 text-xs font-medium uppercase tracking-wide text-slate-500">
-          Recent
-        </h2>
-        <CommandHistory entries={history.entries} />
-      </section>
-
-      <section className="border-t border-slate-100 pt-2">
+      <section className="rounded-xl bg-white/60 p-3 ring-1 ring-stone-200/60">
         <SettingsPanel settings={session.settings} onSettingsChange={onSettingsChange} />
       </section>
     </main>

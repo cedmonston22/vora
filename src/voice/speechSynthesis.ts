@@ -12,6 +12,9 @@ export type SpeakOptions = {
   volume?: number
   voiceName?: string
   locale?: string
+  // Fires on each word/sentence boundary the engine reports — useful for
+  // syncing visual feedback (e.g. halo pulses) to spoken cadence.
+  onBoundary?: (event: { name: string; charIndex: number }) => void
 }
 
 export function speak(text: string, rateOrOptions: number | SpeakOptions = DEFAULT_SPEECH_RATE): Promise<void> {
@@ -46,6 +49,12 @@ export function speak(text: string, rateOrOptions: number | SpeakOptions = DEFAU
       if (match) utt.voice = match
     }
 
+    if (opts.onBoundary) {
+      const cb = opts.onBoundary
+      utt.onboundary = (e: SpeechSynthesisEvent) => {
+        cb({ name: e.name ?? 'word', charIndex: e.charIndex })
+      }
+    }
     utt.onend = () => resolve()
     utt.onerror = () => resolve()
     window.speechSynthesis.speak(utt)

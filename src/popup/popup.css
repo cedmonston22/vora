@@ -74,6 +74,18 @@
   to   { opacity: 0; transform: translateY(8px); }
 }
 
+/* Live-transcript caret blink */
+@media (prefers-reduced-motion: no-preference) {
+  .vora-cursor {
+    animation: vora-cursor-blink 1s steps(1, end) infinite;
+  }
+}
+
+@keyframes vora-cursor-blink {
+  0%, 50%   { opacity: 1; }
+  50.01%, 100% { opacity: 0; }
+}
+
 /* Scrollbar styling for command history */
 .vora-scroll::-webkit-scrollbar {
   width: 4px;

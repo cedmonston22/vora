@@ -6,6 +6,7 @@ export default {
     extend: {
       colors: {
         vora: {
+          300: '#C9A4F3',
           400: '#9B5DE5',
           500: '#7B2CBF',
           700: '#3C096C',
