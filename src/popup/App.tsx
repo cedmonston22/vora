@@ -75,7 +75,6 @@ export default function App(): React.ReactElement {
   })
   const history = useCommandHistory()
   const [sessionOn, setSessionOn] = useState(false)
-  const [alwaysOn, setAlwaysOn] = useState(false)
   const [isSpeaking, setIsSpeaking] = useState(false)
   // Increments on every TTS word boundary so SpeakingHalo can fire a fresh
   // ripple in time with Vora's spoken cadence.
@@ -83,20 +82,14 @@ export default function App(): React.ReactElement {
   const onSpeakBoundary = useCallback((): void => {
     setSpeakingPulse((n) => n + 1)
   }, [])
-  // Real mic level drives the equalizer bars only when Vora is actively
-  // engaged — armed (within the wake window) or always-on. While passively
-  // waiting for the wake word the parallel mic stream is closed entirely so
-  // we aren't holding the mic open or reacting to ambient room sound.
-  // session.state is 'LISTENING' iff armed or always-on; 'IDLE' while passive.
+  // Equalizer bars run whenever Vora is actively transcribing a command
+  // (the LISTENING state) and aren't paused for TTS playback.
   const isActivelyListening = session.state === 'LISTENING' && !isSpeaking
   const micLevel = useMicLevel(isActivelyListening)
-  const alwaysOnRef = useRef(false)
   const sessionActive = useRef(false)
   const processingRef = useRef(false)
-  const wakeArmedUntil = useRef(0)
   const settingsRef = useRef<VoiceSettings>(DEFAULT_SETTINGS)
   settingsRef.current = session.settings
-  const ARMED_WINDOW_MS = 12000
   // runCommand is defined below; the recognizer's onFinal callback needs to
   // invoke it without creating a useCallback dependency cycle (runCommand
   // calls enterListening, which would re-create the recognizer on every
@@ -184,23 +177,6 @@ export default function App(): React.ReactElement {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Watchdog: TRANSCRIBING is meant to be a transient state during the Whisper
-  // round-trip (typically 400–1500ms). If we sit in it longer than 6s, a
-  // callback was dropped (network hang, Groq stall, popup race) — recover
-  // back to a usable state instead of hanging forever.
-  useEffect(() => {
-    if (session.state !== 'TRANSCRIBING') return
-    const id = window.setTimeout(() => {
-      const armed = Date.now() < wakeArmedUntil.current
-      const nextState: ExtensionState =
-        alwaysOnRef.current || armed ? 'LISTENING' : 'IDLE'
-      const msg = "Didn't catch that — try again."
-      dispatch({ type: 'state', state: nextState, message: msg })
-      dispatch({ type: 'transcript', text: '' })
-    }, 6000)
-    return () => window.clearTimeout(id)
-  }, [session.state])
-
   const sendToTab = useCallback(async (msg: ExtensionMessage): Promise<void> => {
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
@@ -233,166 +209,25 @@ export default function App(): React.ReactElement {
     [sendToTab],
   )
 
-  const speakWithCurrentSettings = useCallback(
-    async (text: string): Promise<void> => {
-      const s = settingsRef.current
-      setIsSpeaking(true)
-      try {
-        await speak(text, {
-          rate: s.rate,
-          volume: s.volume,
-          voiceName: s.voiceName || undefined,
-          locale: s.locale,
-          onBoundary: onSpeakBoundary,
-        })
-      } finally {
-        setIsSpeaking(false)
-      }
-    },
-    [onSpeakBoundary],
-  )
-
-  const enterAlwaysOn = useCallback(async (): Promise<void> => {
-    if (alwaysOnRef.current) return
-    alwaysOnRef.current = true
-    setAlwaysOn(true)
-    processingRef.current = true
-    stopListening()
-    dispatch({
-      type: 'state',
-      state: 'LISTENING',
-      message: 'Always-on. Just speak. Say "Vora off" to stop.',
-    })
-    void broadcastState('LISTENING', 'Always-on. Just speak. Say "Vora off" to stop.')
-    await speakWithCurrentSettings('Always-on mode. Just speak.')
-    processingRef.current = false
-    enterListening()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [broadcastState, speakWithCurrentSettings])
-
-  const exitAlwaysOn = useCallback(async (): Promise<void> => {
-    if (!alwaysOnRef.current) return
-    alwaysOnRef.current = false
-    setAlwaysOn(false)
-    wakeArmedUntil.current = 0
-    processingRef.current = true
-    stopListening()
-    dispatch({
-      type: 'state',
-      state: 'IDLE',
-      message: 'Idle. Say "Vora" to activate, or "Vora on" for always-on.',
-    })
-    void broadcastState('IDLE', 'Idle. Say "Vora" to activate, or "Vora on" for always-on.')
-    await speakWithCurrentSettings('Always-on off. Say Vora before each command.')
-    processingRef.current = false
-    enterListening()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [broadcastState, speakWithCurrentSettings])
-
   const enterListening = useCallback((): void => {
     if (!sessionActive.current) return
     dispatch({ type: 'transcript', text: '' })
-    const armed = Date.now() < wakeArmedUntil.current
-    if (alwaysOnRef.current) {
-      dispatch({
-        type: 'state',
-        state: 'LISTENING',
-        message: 'Always-on. Just speak. Say "Vora off" to stop.',
-      })
-      void broadcastState('LISTENING', 'Always-on. Just speak. Say "Vora off" to stop.')
-    } else if (armed) {
-      // We're between hearing the wake word and capturing the command.
-      // Stay visibly Active so the user knows Vora is engaged.
-      dispatch({
-        type: 'state',
-        state: 'LISTENING',
-        message: 'Active. Say a command.',
-      })
-      void broadcastState('LISTENING', 'Active. Say a command.')
-    } else {
-      dispatch({
-        type: 'state',
-        state: 'IDLE',
-        message: 'Idle. Say "Vora" to activate, or "Vora on" for always-on.',
-      })
-      void broadcastState('IDLE')
-    }
+    dispatch({
+      type: 'state',
+      state: 'IDLE',
+      message: 'Idle. Say "Vora" before each command.',
+    })
+    void broadcastState('IDLE')
     void broadcastPartial('')
     try {
       startListening({
-        locale: settingsRef.current.locale,
-        onTranscribing: () => {
-          // Whisper round-trip is in flight. Show a transient state so the
-          // user knows we're working — without this the UI sits on
-          // "Listening" with empty text and looks frozen.
-          dispatch({
-            type: 'state',
-            state: 'TRANSCRIBING',
-            message: 'Transcribing…',
-          })
-          void broadcastState('TRANSCRIBING', 'Transcribing…')
-        },
         onPartial: (text) => {
           console.log('[vora] partial:', text)
-          // Empty text: Whisper returned nothing (silence/noise) or we're
-          // resetting the line. Always drop back to a non-TRANSCRIBING state
-          // — without this, a noise-only clip leaves the UI stuck on
-          // "Transcribing…" until the next utterance.
-          if (!text) {
-            const armed = Date.now() < wakeArmedUntil.current
-            const nextState: ExtensionState =
-              alwaysOnRef.current || armed ? 'LISTENING' : 'IDLE'
-            const msg = alwaysOnRef.current
-              ? 'Always-on. Just speak. Say "Vora off" to stop.'
-              : armed
-                ? 'Active. Say a command.'
-                : 'Idle. Say "Vora" to activate, or "Vora on" for always-on.'
-            dispatch({ type: 'state', state: nextState, message: msg })
-            dispatch({ type: 'transcript', text: '' })
-            void broadcastState(nextState, msg)
-            void broadcastPartial('')
-            return
-          }
-          const stripped = stripWakeWord(text)
-          const armed = Date.now() < wakeArmedUntil.current
-          // Display the RAW transcript at all times — wake-stripping is for
-          // command routing only, not display. Showing stripped text was
-          // hiding words from the user when the wake matcher mis-fired on
-          // the first word of their utterance.
-          if (stripped === null) {
-            if (armed || alwaysOnRef.current) {
-              if (armed) {
-                wakeArmedUntil.current = Date.now() + ARMED_WINDOW_MS
-              }
-              dispatch({ type: 'state', state: 'LISTENING', message: 'Listening — go ahead.' })
-              dispatch({ type: 'transcript', text })
-              void broadcastState('LISTENING')
-              void broadcastPartial(text)
-            } else {
-              // Heard speech but no wake word and not armed — fall back to
-              // IDLE so we don't sit on TRANSCRIBING.
-              dispatch({
-                type: 'state',
-                state: 'IDLE',
-                message: `Heard: "${text}" (no wake word)`,
-              })
-              dispatch({ type: 'transcript', text: '' })
-              void broadcastState('IDLE')
-              void broadcastPartial('')
-            }
-            return
-          }
-          if (stripped === '') {
-            dispatch({
-              type: 'state',
-              state: 'LISTENING',
-              message: 'Active. Say a command.',
-            })
-            dispatch({ type: 'transcript', text: '' })
-            void broadcastState('LISTENING')
-            void broadcastPartial('')
-            return
-          }
+          // Inside an active workflow we listen always-on: every utterance
+          // is a slot answer, no wake word required. Outside a workflow,
+          // only show transcript when the utterance starts with "Vora".
+          const inWorkflow = workflowRef.current !== null
+          if (!inWorkflow && stripWakeWord(text) === null) return
           dispatch({ type: 'state', state: 'LISTENING', message: 'Listening — go ahead.' })
           dispatch({ type: 'transcript', text })
           void broadcastState('LISTENING')
@@ -400,69 +235,45 @@ export default function App(): React.ReactElement {
         },
         onFinal: (cmd) => {
           console.log('[vora] final:', cmd.transcript)
-          const stripped = stripWakeWord(cmd.transcript)
-          const armed = Date.now() < wakeArmedUntil.current
-
-          // Session toggle: "vora on" / "vora off" / "turn on" / "turn off".
-          // Detect on the wake-stripped command so it always wins, even in
-          // always-on mode (where we still want "vora off" to stop).
-          const toggle = stripped !== null ? parseSessionToggle(stripped) : null
-          if (toggle === 'on') {
-            wakeArmedUntil.current = 0
-            void broadcastPartial('')
-            void enterAlwaysOn()
-            return
-          }
-          if (toggle === 'off') {
-            wakeArmedUntil.current = 0
-            void broadcastPartial('')
-            void exitAlwaysOn()
-            return
-          }
-
-          if (stripped === null && !armed && !alwaysOnRef.current) {
-            console.log('[vora] no wake word and not armed, ignoring:', cmd.transcript)
-            dispatch({
-              type: 'state',
-              state: 'IDLE',
-              message: `Heard: "${cmd.transcript}" (no wake word)`,
+          // Inside an active workflow: bypass the wake-word gate so the
+          // user can answer slots ("Team standup", "tomorrow at 3 pm")
+          // without prefixing every reply with "Vora".
+          if (workflowRef.current !== null) {
+            void runCommandRef.current({
+              transcript: cmd.transcript.trim(),
+              confidence: cmd.confidence,
+              timestamp: cmd.timestamp,
             })
-            dispatch({ type: 'transcript', text: '' })
-            void broadcastState('IDLE', `Heard: "${cmd.transcript}" (no wake word)`)
+            return
+          }
+          const stripped = stripWakeWord(cmd.transcript)
+          if (stripped === null) {
+            console.log('[vora] no wake word, ignoring:', cmd.transcript)
+            dispatch({
+              type: 'message',
+              message: `Heard: "${cmd.transcript}" (say "Vora" first)`,
+            })
             void broadcastPartial('')
             return
           }
           if (stripped === '') {
-            console.log('[vora] wake word only, arming for next utterance')
-            wakeArmedUntil.current = Date.now() + ARMED_WINDOW_MS
+            console.log('[vora] wake word with no command, ignoring')
+            dispatch({
+              type: 'message',
+              message: 'Say "Vora" then a command.',
+            })
             void broadcastPartial('')
             return
           }
-          // Whisper produces one final per VAD-bounded utterance, so we run
-          // the command immediately. The accumulate-then-settle dance the
-          // old Web Speech path needed (mid-utterance finals, multiple
-          // finals per command) is unnecessary here.
-          const command = stripped !== null ? stripped : cmd.transcript.trim()
-          wakeArmedUntil.current = Date.now() + ARMED_WINDOW_MS
-          void runCommandRef.current({ transcript: command, timestamp: cmd.timestamp })
+          void runCommandRef.current({
+            transcript: stripped,
+            confidence: cmd.confidence,
+            timestamp: cmd.timestamp,
+          })
         },
         onError: (err) => {
           console.warn('[vora] recognition error:', err)
-          if (err === 'missing-groq-key') {
-            dispatch({
-              type: 'state',
-              state: 'ERROR',
-              message: 'Add your Groq API key in Settings to enable voice.',
-            })
-            sessionActive.current = false
-            setSessionOn(false)
-            return
-          }
-          if (
-            err === 'not-allowed' ||
-            err === 'service-not-allowed' ||
-            err === 'mic-unavailable'
-          ) {
+          if (err === 'not-allowed' || err === 'service-not-allowed') {
             dispatch({
               type: 'state',
               state: 'ERROR',
@@ -471,8 +282,8 @@ export default function App(): React.ReactElement {
             sessionActive.current = false
             setSessionOn(false)
           }
-          // Other errors (transient Groq failures) leave the session running
-          // so the next utterance can recover.
+          // Other errors (no-speech, network) leave the session running so
+          // the next utterance can recover.
         },
         onEnd: () => {
           // The recognizer ends only on stopListening(). runCommand calls
@@ -495,9 +306,6 @@ export default function App(): React.ReactElement {
   const stopSession = useCallback((): void => {
     sessionActive.current = false
     setSessionOn(false)
-    alwaysOnRef.current = false
-    setAlwaysOn(false)
-    wakeArmedUntil.current = 0
     workflowRef.current = null
     stopListening()
     cancelSpeech()
@@ -1020,11 +828,6 @@ export default function App(): React.ReactElement {
           </span>
           <h1 className="text-lg font-semibold tracking-tight">Vora</h1>
         </div>
-        {alwaysOn && (
-          <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-700">
-            Always-on
-          </span>
-        )}
       </header>
 
       {/* Hero: V logo + halo + visualizer + live transcript */}
@@ -1109,14 +912,6 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-function parseSessionToggle(stripped: string): 'on' | 'off' | null {
-  const t = stripped.toLowerCase().replace(/[.,!?]+$/, '').trim()
-  if (t === 'on' || t === 'turn on' || t === 'always on' || t === 'stay on') return 'on'
-  if (t === 'off' || t === 'turn off' || t === 'always off' || t === 'stop' || t === 'stay off')
-    return 'off'
-  return null
-}
-
 function describeAction(action: import('../types/actions').BrowserAction): string {
   switch (action.type) {
     case ActionType.CLICK_ELEMENT:
@@ -1174,7 +969,6 @@ async function getVoiceConfirmation(prompt: string, settings: VoiceSettings): Pr
     const timer = setTimeout(() => finish(false), CONFIRMATION_TIMEOUT_MS)
     try {
       startListening({
-        locale: settings.locale,
         onFinal: (cmd) => {
           clearTimeout(timer)
           const t = cmd.transcript.toLowerCase()

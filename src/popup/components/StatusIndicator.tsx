@@ -23,12 +23,6 @@ const stateConfig: Record<ExtensionState, StateConfig> = {
     text: 'text-[#7B2CBF]',
     bg: 'bg-[#F5F0FF]',
   },
-  TRANSCRIBING: {
-    label: 'Transcribing',
-    dot: 'bg-[#9B5DE5]',
-    text: 'text-[#7B2CBF]',
-    bg: 'bg-[#F5F0FF]',
-  },
   THINKING: {
     label: 'Thinking',
     dot: 'bg-[#FFB347]',

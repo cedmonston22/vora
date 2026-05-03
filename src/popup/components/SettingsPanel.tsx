@@ -3,7 +3,6 @@ import { storageGet, storageSet } from '../../utils/helpers'
 import { getAvailableVoices, getAvailableLocales } from '../../voice/speechSynthesis'
 import {
   STORAGE_KEY_API_KEY,
-  STORAGE_KEY_GROQ_KEY,
   STORAGE_KEY_SPEECH_RATE,
   STORAGE_KEY_SPEECH_VOLUME,
   STORAGE_KEY_SPEECH_VOICE,
@@ -30,19 +29,14 @@ type Props = {
 export function SettingsPanel({ settings, onSettingsChange }: Props): React.ReactElement {
   const [open, setOpen] = useState(false)
   const [apiKey, setApiKey] = useState('')
-  const [groqKey, setGroqKey] = useState('')
   const [savedAt, setSavedAt] = useState<number | null>(null)
-  const [groqSavedAt, setGroqSavedAt] = useState<number | null>(null)
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([])
   const [locales, setLocales] = useState<string[]>([DEFAULT_SPEECH_LOCALE])
 
-  // Load API keys from storage on mount
+  // Load API key from storage on mount
   useEffect(() => {
     void storageGet<string>(STORAGE_KEY_API_KEY).then((v) => {
       if (typeof v === 'string') setApiKey(v)
-    })
-    void storageGet<string>(STORAGE_KEY_GROQ_KEY).then((v) => {
-      if (typeof v === 'string') setGroqKey(v)
     })
   }, [])
 
@@ -68,11 +62,6 @@ export function SettingsPanel({ settings, onSettingsChange }: Props): React.Reac
   const saveKey = async (): Promise<void> => {
     await storageSet(STORAGE_KEY_API_KEY, apiKey.trim())
     setSavedAt(Date.now())
-  }
-
-  const saveGroqKey = async (): Promise<void> => {
-    await storageSet(STORAGE_KEY_GROQ_KEY, groqKey.trim())
-    setGroqSavedAt(Date.now())
   }
 
   const update = async (patch: Partial<VoiceSettings>): Promise<void> => {
@@ -112,32 +101,6 @@ export function SettingsPanel({ settings, onSettingsChange }: Props): React.Reac
         >
           Close
         </button>
-      </div>
-
-      {/* Groq API Key — used for Whisper speech-to-text */}
-      <div>
-        <label htmlFor="vora-groq-key" className="mb-1 block text-xs font-medium text-slate-600">
-          Groq API key (speech-to-text)
-        </label>
-        <input
-          id="vora-groq-key"
-          type="password"
-          value={groqKey}
-          onChange={(e) => setGroqKey(e.target.value)}
-          placeholder="gsk_…"
-          className="w-full rounded border border-slate-300 px-2 py-1 text-xs"
-        />
-        <button
-          type="button"
-          onClick={() => { void saveGroqKey() }}
-          className="mt-1 w-full rounded bg-slate-900 px-2 py-1 text-xs font-medium text-white hover:bg-slate-800"
-        >
-          Save Groq key
-        </button>
-        {groqSavedAt != null && <p className="mt-1 text-xs text-emerald-600">Saved.</p>}
-        <p className="mt-1 text-xs text-slate-400">
-          Free at <a href="https://console.groq.com/keys" target="_blank" rel="noreferrer" className="underline">console.groq.com/keys</a>.
-        </p>
       </div>
 
       {/* API Key */}

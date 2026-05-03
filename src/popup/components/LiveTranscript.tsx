@@ -9,16 +9,11 @@ type Props = {
 export function LiveTranscript({ text, state }: Props): React.ReactElement {
   const trimmed = text.trim()
   const isListening = state === 'LISTENING'
-  const isTranscribing = state === 'TRANSCRIBING'
   const showListeningPlaceholder = isListening && trimmed.length === 0
 
   return (
     <div className="flex min-h-[5.5rem] w-full items-center justify-center px-1">
-      {isTranscribing ? (
-        <p className="text-center text-base font-medium tracking-wide text-vora-500/70">
-          Transcribing<span className="vora-cursor ml-0.5">…</span>
-        </p>
-      ) : trimmed.length > 0 ? (
+      {trimmed.length > 0 ? (
         <p
           className="text-center text-xl font-medium leading-snug text-stone-900"
           aria-live="polite"
