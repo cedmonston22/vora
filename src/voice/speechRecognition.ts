@@ -56,23 +56,26 @@ export function startListening(
   r.maxAlternatives = 1
   r.lang = 'en-US'
 
-  // Hard 3-second utterance window. From the moment the user starts speaking
-  // (first interim or final), we collect everything (including interim text
-  // never finalized by the engine) for UTTERANCE_MAX_MS, then dispatch the
-  // best transcript we have. This avoids Web Speech's tendency to split a
-  // single utterance into multiple finals — and bounds command length so
-  // long ramblings don't pile up.
-  const UTTERANCE_MAX_MS = 3000
+  // Utterance buffering:
+  // - Flush after a short silence so natural pauses are respected.
+  // - Keep a longer hard cap as a safety net for run-on speech.
+  const SILENCE_FLUSH_MS = 1200
+  const UTTERANCE_MAX_MS = 12000
   let bufferedFinals = ''
   let liveInterim = ''
   let bufferedConfidence = 0
   let utteranceStartTs = 0
   let capTimer: ReturnType<typeof setTimeout> | null = null
+  let silenceTimer: ReturnType<typeof setTimeout> | null = null
 
   const resetUtterance = (): void => {
     if (capTimer !== null) {
       clearTimeout(capTimer)
       capTimer = null
+    }
+    if (silenceTimer !== null) {
+      clearTimeout(silenceTimer)
+      silenceTimer = null
     }
     bufferedFinals = ''
     liveInterim = ''
@@ -87,6 +90,11 @@ export function startListening(
     resetUtterance()
     if (!text) return
     cbs.onFinal({ transcript: text, confidence: conf, timestamp: ts })
+  }
+
+  const scheduleSilenceFlush = (): void => {
+    if (silenceTimer !== null) clearTimeout(silenceTimer)
+    silenceTimer = setTimeout(flushUtterance, SILENCE_FLUSH_MS)
   }
 
   r.onresult = (event) => {
@@ -110,6 +118,7 @@ export function startListening(
       utteranceStartTs = Date.now()
       capTimer = setTimeout(flushUtterance, UTTERANCE_MAX_MS)
     }
+    if (bufferedFinals || liveInterim) scheduleSilenceFlush()
     const live = [bufferedFinals, liveInterim].filter(Boolean).join(' ').trim()
     if (live) cbs.onPartial?.(live)
   }
