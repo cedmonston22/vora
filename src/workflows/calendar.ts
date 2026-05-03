@@ -1,4 +1,5 @@
 import type { Workflow } from './types'
+import { ActionType } from '../types/actions'
 import {
   parseDate,
   parseTime,
@@ -12,8 +13,6 @@ const DEFAULT_DURATION_MINUTES = 60
 function parseDurationMinutes(raw: string): number | null {
   const t = raw.toLowerCase().trim()
   if (/^(default|standard|normal|whatever)/.test(t)) return DEFAULT_DURATION_MINUTES
-  // "30 minutes", "thirty minutes", "1 hour", "an hour", "two hours",
-  // "1.5 hours", "ninety minutes"
   if (/^an?\s+hour\b/.test(t)) return 60
   if (/^half\s+(an?\s+)?hour\b/.test(t)) return 30
   const m = /^(\d+(?:\.\d+)?)\s*(minutes?|mins?|hours?|hrs?|h|m)\b/.exec(t)
@@ -37,14 +36,36 @@ function parseDurationMinutes(raw: string): number | null {
   return null
 }
 
+function buildEventUrl(values: Record<string, string>): string {
+  const title = values.title ?? 'Untitled event'
+  const date = JSON.parse(values.date) as { year: number; month: number; day: number }
+  const time = JSON.parse(values.time) as { hour: number; minute: number }
+  const duration = values.duration
+    ? parseInt(values.duration, 10)
+    : DEFAULT_DURATION_MINUTES
+  const range = formatCalendarRange(date, time, duration)
+  const params = new URLSearchParams({
+    action: 'TEMPLATE',
+    text: title,
+    dates: range,
+  })
+  return `https://calendar.google.com/calendar/render?${params.toString()}`
+}
+
+// The Calendar workflow uses URL prefill instead of progressive DOM filling
+// because Google Calendar's date/time pickers are custom widgets that don't
+// accept plain FILL_INPUT. Slots are collected silently, then the final
+// action navigates to a TEMPLATE URL with all fields pre-populated; the user
+// just needs to click Save.
 export const CALENDAR_EVENT_WORKFLOW: Workflow = {
   id: 'calendar-event',
   label: 'New calendar event',
   triggers: [
-    /\b(create|schedule|add|make|new|book|set\s+up)\s+(a\s+|an\s+)?(calendar\s+)?(event|meeting|appointment|reminder)\b/i,
-    /\b(add|put)\s+(\w+\s+){0,3}(to\s+my|on\s+my|in\s+my)\s+calendar\b/i,
-    /\bnew\s+calendar\s+event\b/i,
+    /^(create|schedule|book|set\s+up|make)\s+(a\s+|an\s+)?(new\s+)?(calendar\s+)?(event|meeting|appointment)\b/i,
+    /^(add|put)\s+(a\s+|an\s+)?(new\s+)?(event|meeting|appointment)\s+(to|on|in)\s+(my\s+)?calendar\b/i,
+    /^new\s+(calendar\s+)?(event|meeting|appointment)\b/i,
   ],
+  // No openUrl — collect everything first, then navigate at finalAction.
   slots: [
     {
       id: 'title',
@@ -58,13 +79,14 @@ export const CALENDAR_EVENT_WORKFLOW: Workflow = {
     },
     {
       id: 'date',
-      prompt: "What day is the event? You can say things like 'tomorrow', 'Friday', or 'December 5th'.",
+      prompt:
+        "What day is the event? Say something like 'tomorrow', 'Friday', or 'December 5th'.",
       parse: (s) => {
         const d = parseDate(s)
         return d ? JSON.stringify(d) : null
       },
       onParseFail:
-        "I didn't catch the date. Try a phrase like 'tomorrow', 'next Monday', or 'December 5th'.",
+        "I didn't catch the date. Try 'tomorrow', 'next Monday', or 'December 5th'.",
     },
     {
       id: 'time',
@@ -73,12 +95,12 @@ export const CALENDAR_EVENT_WORKFLOW: Workflow = {
         const t = parseTime(s)
         return t ? JSON.stringify(t) : null
       },
-      onParseFail: "I didn't catch the time. Try a phrase like '3pm' or '10:30am'.",
+      onParseFail: "I didn't catch the time. Try '3pm' or '10:30am'.",
     },
     {
       id: 'duration',
       prompt:
-        "How long is the event? You can say something like '30 minutes' or '1 hour', or say 'skip' for the default of one hour.",
+        "How long is the event? Say something like '30 minutes' or '1 hour', or 'skip' for one hour.",
       parse: (s) => {
         const n = parseDurationMinutes(s)
         return n != null ? String(n) : null
@@ -88,21 +110,18 @@ export const CALENDAR_EVENT_WORKFLOW: Workflow = {
       skippable: true,
     },
   ],
-  buildPlan: (v) => {
+  buildConfirmSummary: (v) => {
     const title = v.title ?? 'Untitled event'
     const date = JSON.parse(v.date) as { year: number; month: number; day: number }
     const time = JSON.parse(v.time) as { hour: number; minute: number }
-    const duration = v.duration ? parseInt(v.duration, 10) : DEFAULT_DURATION_MINUTES
-    const range = formatCalendarRange(date, time, duration)
-    const params = new URLSearchParams({
-      action: 'TEMPLATE',
-      text: title,
-      dates: range,
-    })
-    const url = `https://calendar.google.com/calendar/render?${params.toString()}`
-    const dateLabel = formatDateReadback(date)
-    const timeLabel = formatTimeReadback(time)
-    const summary = `I'll open Google Calendar to create "${title}" on ${dateLabel} at ${timeLabel} for ${duration} minutes. You can review and save it. Continue?`
-    return { summary, url }
+    const duration = v.duration
+      ? parseInt(v.duration, 10)
+      : DEFAULT_DURATION_MINUTES
+    return `Ready to create "${title}" on ${formatDateReadback(date)} at ${formatTimeReadback(time)} for ${duration} minutes. Open the calendar to save it?`
   },
+  finalAction: (values) => ({
+    type: ActionType.NAVIGATE,
+    url: buildEventUrl(values),
+  }),
+  finalReadback: 'Calendar opened. Review the event and click Save.',
 }

@@ -28,6 +28,7 @@ export type MsgType = (typeof MSG)[keyof typeof MSG]
 export type ExtensionState =
   | 'IDLE'
   | 'LISTENING'
+  | 'TRANSCRIBING'
   | 'THINKING'
   | 'CONFIRMING'
   | 'EXECUTING'
@@ -35,7 +36,6 @@ export type ExtensionState =
 
 export type VoiceCommand = {
   transcript: string
-  confidence: number
   timestamp: number
   lastReadback?: string // last TTS message spoken, for "repeat that" handling
 }

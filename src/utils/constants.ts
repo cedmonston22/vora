@@ -6,10 +6,16 @@ export const AI_HARD_TIMEOUT_MS = 15_000
 // Voice
 export const WAKE_WORD = 'hey vora'
 
-// Wake word matching. Web Speech often mishears "Vora" as "vore uh", "nora",
-// "bora", or breaks it across two tokens. We accept a list of phonetic variants
-// to keep the wake gate forgiving. Order does not matter — the matcher sorts
-// by length internally so longer phrases match before shorter ones.
+// Wake word matching. Web Speech often mishears "Vora" as "vore uh", "voreah",
+// or breaks it across two tokens. We accept genuine phonetic variants of
+// "vora" itself. Single-word mishearings within edit distance 1 (e.g. "ora",
+// "nora", "bora", "dora", "vola") are caught by the fuzzy gate in
+// stripWakeWord, so they don't need to be listed here.
+//
+// We intentionally exclude common English words that happen to sound similar
+// (laura, flora, cora, tora, sora, mora, pora, fora, four uh, ...) — listing
+// them caused them to be stripped from real commands as false-positive wake
+// words.
 const WAKE_PREFIXES = ['', 'hey ', 'hi ', 'ok ', 'okay ']
 const WAKE_CORES = [
   'vora',
@@ -19,38 +25,19 @@ const WAKE_CORES = [
   'vore ah',
   'vore a',
   'vore',
-  'nora',
-  'bora',
-  'dora',
   'aurora',
   'verra',
   'vera',
-  'ora',
-  'oraa',
-  'voda',
-  'vola',
+  'voraa',
   'vora vora',
-  'phora',
-  'laura',
-  'flora',
-  'lora',
-  'cora',
-  'tora',
-  'sora',
-  'mora',
-  'pora',
   'veera',
   'veerah',
-  'four uh',
-  'four a',
-  'fora',
 ]
 
 export const WAKE_WORDS: readonly string[] = WAKE_PREFIXES
   .flatMap((p) => WAKE_CORES.map((c) => p + c))
   .sort((a, b) => b.length - a.length)
 
-export const MIN_CONFIDENCE = 0.35
 export const CONFIRMATION_TIMEOUT_MS = 5_000
 export const DEFAULT_SPEECH_RATE = 1.0
 export const MIN_SPEECH_RATE = 0.5
@@ -65,6 +52,7 @@ export const MAX_HISTORY_ENTRIES = 20
 
 // Storage keys
 export const STORAGE_KEY_API_KEY = 'vora_api_key'
+export const STORAGE_KEY_GROQ_KEY = 'vora_groq_key'
 export const STORAGE_KEY_SPEECH_RATE = 'vora_speech_rate'
 export const STORAGE_KEY_SPEECH_VOLUME = 'vora_speech_volume'
 export const STORAGE_KEY_SPEECH_VOICE = 'vora_speech_voice'

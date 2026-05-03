@@ -3,7 +3,7 @@ import { GMAIL_COMPOSE_WORKFLOW } from './gmail'
 import { CALENDAR_EVENT_WORKFLOW } from './calendar'
 
 export { isCancelUtterance, isSkipUtterance } from './types'
-export type { Workflow, Slot, ActiveWorkflow, WorkflowPlan } from './types'
+export type { Workflow, Slot, ActiveWorkflow } from './types'
 
 export const WORKFLOWS: readonly Workflow[] = [
   GMAIL_COMPOSE_WORKFLOW,

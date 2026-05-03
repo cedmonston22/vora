@@ -11,9 +11,8 @@ import { useCommandHistory } from './hooks/useCommandHistory'
 import { useMicLevel } from './hooks/useMicLevel'
 import { startListening, stopListening } from '../voice/speechRecognition'
 import { speak, cancelSpeech } from '../voice/speechSynthesis'
-import { storageGet, stripWakeWord, editDistance } from '../utils/helpers'
+import { storageGet, stripWakeWord } from '../utils/helpers'
 import {
-  MIN_CONFIDENCE,
   CONFIRMATION_TIMEOUT_MS,
   DEFAULT_SPEECH_RATE,
   DEFAULT_SPEECH_VOLUME,
@@ -92,40 +91,20 @@ export default function App(): React.ReactElement {
   const isActivelyListening = session.state === 'LISTENING' && !isSpeaking
   const micLevel = useMicLevel(isActivelyListening)
   const alwaysOnRef = useRef(false)
-  const learnedRef = useRef<string[]>([])
   const sessionActive = useRef(false)
   const processingRef = useRef(false)
   const wakeArmedUntil = useRef(0)
   const settingsRef = useRef<VoiceSettings>(DEFAULT_SETTINGS)
   settingsRef.current = session.settings
   const ARMED_WINDOW_MS = 12000
-  // After a final segment, wait this long for additional speech before
-  // actually running the command. Resets on every new partial/final, so a
-  // natural mid-sentence pause won't cut the user off.
-  const SETTLE_MS = 1500
-  const pendingCommandRef = useRef('')
-  const pendingConfidenceRef = useRef(0)
-  const settleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  // Stable refs to settle helpers — populated once runCommand is defined
-  // below. Using refs lets the recognizer callbacks call them without a
-  // dependency cycle on runCommand.
-  const flushPendingRef = useRef<() => void>(() => {})
-  const scheduleSettleRef = useRef<() => void>(() => {})
-  const cancelSettleRef = useRef<() => void>(() => {})
-
-  const captureCandidate = useCallback((transcript: string): void => {
-    const lower = transcript.toLowerCase().trim()
-    if (!lower) return
-    const firstWord = (lower.split(/\s+/)[0] ?? '').replace(/[,.:;!?\-]+$/, '')
-    if (firstWord.length < 3 || firstWord.length > 8) return
-    const dist = editDistance(firstWord, 'vora')
-    // Distance 0–1 already matches the fuzzy gate. We auto-learn 2–3.
-    if (dist < 2 || dist > 3) return
-    if (learnedRef.current.includes(firstWord)) return
-    const next = [...learnedRef.current, firstWord].slice(-10)
-    learnedRef.current = next
-    console.log('[vora] auto-learned wake alias:', firstWord, 'distance:', dist)
-  }, [])
+  // runCommand is defined below; the recognizer's onFinal callback needs to
+  // invoke it without creating a useCallback dependency cycle (runCommand
+  // calls enterListening, which would re-create the recognizer on every
+  // new runCommand identity). The ref is updated in a useEffect after
+  // runCommand is defined.
+  const runCommandRef = useRef<(cmd: VoiceCommand) => Promise<void>>(
+    async () => {},
+  )
 
   // Track last readback for "repeat that" support
   const lastReadbackRef = useRef<string>('')
@@ -204,6 +183,23 @@ export default function App(): React.ReactElement {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Watchdog: TRANSCRIBING is meant to be a transient state during the Whisper
+  // round-trip (typically 400–1500ms). If we sit in it longer than 6s, a
+  // callback was dropped (network hang, Groq stall, popup race) — recover
+  // back to a usable state instead of hanging forever.
+  useEffect(() => {
+    if (session.state !== 'TRANSCRIBING') return
+    const id = window.setTimeout(() => {
+      const armed = Date.now() < wakeArmedUntil.current
+      const nextState: ExtensionState =
+        alwaysOnRef.current || armed ? 'LISTENING' : 'IDLE'
+      const msg = "Didn't catch that — try again."
+      dispatch({ type: 'state', state: nextState, message: msg })
+      dispatch({ type: 'transcript', text: '' })
+    }, 6000)
+    return () => window.clearTimeout(id)
+  }, [session.state])
 
   const sendToTab = useCallback(async (msg: ExtensionMessage): Promise<void> => {
     try {
@@ -324,24 +320,65 @@ export default function App(): React.ReactElement {
     void broadcastPartial('')
     try {
       startListening({
+        locale: settingsRef.current.locale,
+        onTranscribing: () => {
+          // Whisper round-trip is in flight. Show a transient state so the
+          // user knows we're working — without this the UI sits on
+          // "Listening" with empty text and looks frozen.
+          dispatch({
+            type: 'state',
+            state: 'TRANSCRIBING',
+            message: 'Transcribing…',
+          })
+          void broadcastState('TRANSCRIBING', 'Transcribing…')
+        },
         onPartial: (text) => {
           console.log('[vora] partial:', text)
-          const stripped = stripWakeWord(text, learnedRef.current)
+          // Empty text: Whisper returned nothing (silence/noise) or we're
+          // resetting the line. Always drop back to a non-TRANSCRIBING state
+          // — without this, a noise-only clip leaves the UI stuck on
+          // "Transcribing…" until the next utterance.
+          if (!text) {
+            const armed = Date.now() < wakeArmedUntil.current
+            const nextState: ExtensionState =
+              alwaysOnRef.current || armed ? 'LISTENING' : 'IDLE'
+            const msg = alwaysOnRef.current
+              ? 'Always-on. Just speak. Say "Vora off" to stop.'
+              : armed
+                ? 'Active. Say a command.'
+                : 'Idle. Say "Vora" to activate, or "Vora on" for always-on.'
+            dispatch({ type: 'state', state: nextState, message: msg })
+            dispatch({ type: 'transcript', text: '' })
+            void broadcastState(nextState, msg)
+            void broadcastPartial('')
+            return
+          }
+          const stripped = stripWakeWord(text)
           const armed = Date.now() < wakeArmedUntil.current
+          // Display the RAW transcript at all times — wake-stripping is for
+          // command routing only, not display. Showing stripped text was
+          // hiding words from the user when the wake matcher mis-fired on
+          // the first word of their utterance.
           if (stripped === null) {
             if (armed || alwaysOnRef.current) {
               if (armed) {
-                // User is speaking the command; keep extending the window so
-                // long pauses or slow speech don't drop the utterance.
                 wakeArmedUntil.current = Date.now() + ARMED_WINDOW_MS
               }
               dispatch({ type: 'state', state: 'LISTENING', message: 'Listening — go ahead.' })
               dispatch({ type: 'transcript', text })
               void broadcastState('LISTENING')
               void broadcastPartial(text)
-              // User is still speaking — extend the settle window so a brief
-              // pause won't trigger an early flush.
-              if (pendingCommandRef.current) scheduleSettleRef.current()
+            } else {
+              // Heard speech but no wake word and not armed — fall back to
+              // IDLE so we don't sit on TRANSCRIBING.
+              dispatch({
+                type: 'state',
+                state: 'IDLE',
+                message: `Heard: "${text}" (no wake word)`,
+              })
+              dispatch({ type: 'transcript', text: '' })
+              void broadcastState('IDLE')
+              void broadcastPartial('')
             }
             return
           }
@@ -357,14 +394,13 @@ export default function App(): React.ReactElement {
             return
           }
           dispatch({ type: 'state', state: 'LISTENING', message: 'Listening — go ahead.' })
-          dispatch({ type: 'transcript', text: stripped })
+          dispatch({ type: 'transcript', text })
           void broadcastState('LISTENING')
-          void broadcastPartial(stripped)
-          if (pendingCommandRef.current) scheduleSettleRef.current()
+          void broadcastPartial(text)
         },
         onFinal: (cmd) => {
-          console.log('[vora] final:', cmd.transcript, 'confidence:', cmd.confidence)
-          const stripped = stripWakeWord(cmd.transcript, learnedRef.current)
+          console.log('[vora] final:', cmd.transcript)
+          const stripped = stripWakeWord(cmd.transcript)
           const armed = Date.now() < wakeArmedUntil.current
 
           // Session toggle: "vora on" / "vora off" / "turn on" / "turn off".
@@ -372,14 +408,12 @@ export default function App(): React.ReactElement {
           // always-on mode (where we still want "vora off" to stop).
           const toggle = stripped !== null ? parseSessionToggle(stripped) : null
           if (toggle === 'on') {
-            cancelSettleRef.current()
             wakeArmedUntil.current = 0
             void broadcastPartial('')
             void enterAlwaysOn()
             return
           }
           if (toggle === 'off') {
-            cancelSettleRef.current()
             wakeArmedUntil.current = 0
             void broadcastPartial('')
             void exitAlwaysOn()
@@ -388,11 +422,13 @@ export default function App(): React.ReactElement {
 
           if (stripped === null && !armed && !alwaysOnRef.current) {
             console.log('[vora] no wake word and not armed, ignoring:', cmd.transcript)
-            captureCandidate(cmd.transcript)
             dispatch({
-              type: 'message',
+              type: 'state',
+              state: 'IDLE',
               message: `Heard: "${cmd.transcript}" (no wake word)`,
             })
+            dispatch({ type: 'transcript', text: '' })
+            void broadcastState('IDLE', `Heard: "${cmd.transcript}" (no wake word)`)
             void broadcastPartial('')
             return
           }
@@ -402,26 +438,31 @@ export default function App(): React.ReactElement {
             void broadcastPartial('')
             return
           }
-          // Accumulate this final into the pending command and schedule a
-          // settle. Mid-sentence pauses produce premature finals from the
-          // engine; the settle waits for true silence before running so we
-          // don't cut the user off.
+          // Whisper produces one final per VAD-bounded utterance, so we run
+          // the command immediately. The accumulate-then-settle dance the
+          // old Web Speech path needed (mid-utterance finals, multiple
+          // finals per command) is unnecessary here.
           const command = stripped !== null ? stripped : cmd.transcript.trim()
           wakeArmedUntil.current = Date.now() + ARMED_WINDOW_MS
-          pendingCommandRef.current = pendingCommandRef.current
-            ? `${pendingCommandRef.current} ${command}`
-            : command
-          pendingConfidenceRef.current = Math.max(
-            pendingConfidenceRef.current,
-            cmd.confidence,
-          )
-          void broadcastPartial(pendingCommandRef.current)
-          scheduleSettleRef.current()
+          void runCommandRef.current({ transcript: command, timestamp: cmd.timestamp })
         },
         onError: (err) => {
           console.warn('[vora] recognition error:', err)
-          // 'no-speech' and 'aborted' are normal — onEnd will handle the restart.
-          if (err === 'not-allowed' || err === 'service-not-allowed') {
+          if (err === 'missing-groq-key') {
+            dispatch({
+              type: 'state',
+              state: 'ERROR',
+              message: 'Add your Groq API key in Settings to enable voice.',
+            })
+            sessionActive.current = false
+            setSessionOn(false)
+            return
+          }
+          if (
+            err === 'not-allowed' ||
+            err === 'service-not-allowed' ||
+            err === 'mic-unavailable'
+          ) {
             dispatch({
               type: 'state',
               state: 'ERROR',
@@ -430,17 +471,15 @@ export default function App(): React.ReactElement {
             sessionActive.current = false
             setSessionOn(false)
           }
+          // Other errors (transient Groq failures) leave the session running
+          // so the next utterance can recover.
         },
         onEnd: () => {
-          // Recognition can end on browser silence timeouts even with
-          // continuous=true. Don't restart while a command is being processed,
-          // otherwise the brief IDLE-restart flashes between THINKING and
-          // EXECUTING. runCommand will call enterListening again at the end.
+          // The recognizer ends only on stopListening(). runCommand calls
+          // enterListening at the end of every command, so we don't need to
+          // restart here.
           if (!sessionActive.current) return
           if (processingRef.current) return
-          setTimeout(() => {
-            if (sessionActive.current && !processingRef.current) enterListening()
-          }, 250)
         },
       })
     } catch (err) {
@@ -462,7 +501,6 @@ export default function App(): React.ReactElement {
     workflowRef.current = null
     stopListening()
     cancelSpeech()
-    cancelSettleRef.current()
     setIsSpeaking(false)
     dispatch({
       type: 'state',
@@ -517,22 +555,12 @@ export default function App(): React.ReactElement {
       // Pause recognition while we process so TTS readback isn't heard back.
       stopListening()
 
-      if (cmd.confidence > 0 && cmd.confidence < MIN_CONFIDENCE) {
-        dispatch({
-          type: 'state',
-          state: 'ERROR',
-          message: `Heard "${cmd.transcript}" but not clearly.`,
-        })
-        await speakWithSettings(
-          `I heard "${cmd.transcript}" but I'm not sure what you meant. Please rephrase.`,
-        )
-        enterListening()
-        return
-      }
-
-      // Workflow handling — multi-step guided dialogues (compose email, new
-      // calendar event). Active workflows route the transcript to the slot
-      // collector instead of the LLM. Trigger phrases start a workflow.
+      // Workflow handling — guided dialogues (compose email, new calendar
+      // event). On a trigger we navigate to the workflow's openUrl, then walk
+      // through slots one at a time. Each answer can run a fillAction on the
+      // page so the user sees the field populate before being asked the next
+      // question. After the final slot we read back a summary, get voice
+      // confirmation, and run finalAction (e.g. click Send).
       const activeWorkflow = workflowRef.current
       const triggered: Workflow | null = activeWorkflow
         ? null
@@ -558,6 +586,38 @@ export default function App(): React.ReactElement {
             values: {},
           }
           workflowRef.current = wf
+
+          if (triggered.openUrl) {
+            const opening = `Opening ${triggered.label}…`
+            dispatch({ type: 'state', state: 'EXECUTING', message: opening })
+            void broadcastState('EXECUTING', opening)
+            try {
+              const navRes = await chrome.runtime.sendMessage({
+                type: MSG.BACKGROUND_NAVIGATE,
+                payload: { url: triggered.openUrl },
+              })
+              if (!navRes?.success) {
+                workflowRef.current = null
+                const m =
+                  typeof navRes?.message === 'string'
+                    ? navRes.message
+                    : 'I could not open that page.'
+                dispatch({ type: 'state', state: 'ERROR', message: m })
+                await speakWithSettings(m)
+                processingRef.current = false
+                enterListening()
+                return
+              }
+            } catch {
+              workflowRef.current = null
+              await speakWithSettings('I could not open that page.')
+              processingRef.current = false
+              enterListening()
+              return
+            }
+            await sleep(triggered.openDelayMs ?? 2500)
+          }
+
           const slot = triggered.slots[0]
           const status = `${triggered.label}: ${slot.prompt}`
           dispatch({ type: 'state', state: 'LISTENING', message: status })
@@ -591,7 +651,55 @@ export default function App(): React.ReactElement {
           return
         }
 
+        // For slots with verify(), read the parsed value back and ask for
+        // yes/no before filling. On "no" we re-prompt the same slot so the
+        // user can re-dictate without the wrong value being typed onto the
+        // page. Critical for fields where Web Speech often substitutes
+        // common words for unusual names.
+        if (slot.verify && value !== '') {
+          const verifyPrompt = slot.verify(value)
+          dispatch({ type: 'state', state: 'CONFIRMING', message: verifyPrompt })
+          void broadcastState('CONFIRMING', verifyPrompt)
+          const ok = await getVoiceConfirmation(verifyPrompt, s)
+          if (!ok) {
+            const retry = `OK, let's try again. ${slot.prompt}`
+            dispatch({ type: 'state', state: 'LISTENING', message: retry })
+            void broadcastState('LISTENING', retry)
+            await speakWithSettings(retry)
+            processingRef.current = false
+            enterListening()
+            return
+          }
+        }
+
         wf.values[slot.id] = value
+
+        // Run the slot's fillAction on the page (e.g. populate the To field
+        // in Gmail compose). Retry a couple of times to absorb the brief
+        // window where the page is mid-render.
+        if (slot.fillAction && value !== '') {
+          const action = slot.fillAction(value)
+          const fillRes = await sendActionWithRetry(action, 3, 700)
+          if (!fillRes.success) {
+            workflowRef.current = null
+            const m = fillRes.message || 'I could not fill that field.'
+            dispatch({ type: 'state', state: 'ERROR', message: m })
+            recordHistory({
+              transcript: cmd.transcript,
+              readback: m,
+              success: false,
+              timestamp: Date.now(),
+            })
+            await speakWithSettings(`${m} Cancelling.`)
+            processingRef.current = false
+            enterListening()
+            return
+          }
+          if (slot.readback) {
+            await speakWithSettings(slot.readback(value))
+          }
+        }
+
         wf.slotIndex += 1
 
         if (wf.slotIndex < wf.workflow.slots.length) {
@@ -605,28 +713,28 @@ export default function App(): React.ReactElement {
           return
         }
 
-        // All slots filled — confirm, then navigate to the prefilled URL.
-        let plan
+        // All slots filled — confirm before running the final action.
+        let summary: string
         try {
-          plan = wf.workflow.buildPlan(wf.values)
+          summary = wf.workflow.buildConfirmSummary(wf.values)
         } catch (err) {
           workflowRef.current = null
-          const m = err instanceof Error ? err.message : 'Could not build the plan.'
+          const m = err instanceof Error ? err.message : 'Could not build summary.'
+          await speakWithSettings('Something went wrong putting that together.')
           recordHistory({
             transcript: wf.workflow.label,
             readback: m,
             success: false,
             timestamp: Date.now(),
           })
-          await speakWithSettings('Something went wrong putting that together.')
           processingRef.current = false
           enterListening()
           return
         }
 
-        dispatch({ type: 'state', state: 'CONFIRMING', message: plan.summary })
-        void broadcastState('CONFIRMING', plan.summary)
-        const confirmed = await getVoiceConfirmation(plan.summary, s)
+        dispatch({ type: 'state', state: 'CONFIRMING', message: summary })
+        void broadcastState('CONFIRMING', summary)
+        const confirmed = await getVoiceConfirmation(summary, s)
         if (!confirmed) {
           workflowRef.current = null
           recordHistory({
@@ -642,50 +750,68 @@ export default function App(): React.ReactElement {
         }
 
         workflowRef.current = null
-        const doing = `Opening ${wf.workflow.label}…`
-        dispatch({ type: 'state', state: 'EXECUTING', message: doing })
-        void broadcastState('EXECUTING', doing)
 
-        try {
-          const navRes = await chrome.runtime.sendMessage({
-            type: MSG.BACKGROUND_NAVIGATE,
-            payload: { url: plan.url },
-          })
-          const ok = navRes?.success === true
-          const message: string =
-            typeof navRes?.message === 'string' && navRes.message
-              ? navRes.message
-              : ok
-                ? `${wf.workflow.label} opened.`
-                : 'Could not open that page.'
-          if (ok) lastReadbackRef.current = message
+        if (!wf.workflow.finalAction) {
+          const message = wf.workflow.finalReadback ?? 'Done.'
+          dispatch({ type: 'state', state: 'EXECUTING', message: '✓ ' + message })
+          void broadcastState('EXECUTING', '✓ ' + message)
           recordHistory({
             transcript: wf.workflow.label,
             readback: message,
-            success: ok,
+            success: true,
             timestamp: Date.now(),
           })
-          const resultPrefix = ok ? '✓ ' : '✗ '
-          dispatch({
-            type: 'state',
-            state: ok ? 'EXECUTING' : 'ERROR',
-            message: resultPrefix + message,
-          })
-          void broadcastState(ok ? 'EXECUTING' : 'ERROR', resultPrefix + message)
+          lastReadbackRef.current = message
           await speakWithSettings(message)
-          await sleep(400)
-        } catch (err) {
-          const m = err instanceof Error ? err.message : 'Navigation failed.'
-          recordHistory({
-            transcript: wf.workflow.label,
-            readback: m,
-            success: false,
-            timestamp: Date.now(),
-          })
-          dispatch({ type: 'state', state: 'ERROR', message: m })
-          void broadcastState('ERROR')
-          await speakWithSettings('Something went wrong.')
+          processingRef.current = false
+          enterListening()
+          return
         }
+
+        const finalAction = wf.workflow.finalAction(wf.values)
+        const doing = `Finishing ${wf.workflow.label}…`
+        dispatch({ type: 'state', state: 'EXECUTING', message: doing })
+        void broadcastState('EXECUTING', doing)
+
+        let ok = false
+        let finalMsg = ''
+        try {
+          if (finalAction.type === ActionType.NAVIGATE) {
+            const navRes = await chrome.runtime.sendMessage({
+              type: MSG.BACKGROUND_NAVIGATE,
+              payload: { url: finalAction.url },
+            })
+            ok = navRes?.success === true
+            finalMsg = typeof navRes?.message === 'string' ? navRes.message : ''
+          } else {
+            const res = await sendActionWithRetry(finalAction, 3, 700)
+            ok = res.success
+            finalMsg = res.message
+          }
+        } catch (err) {
+          ok = false
+          finalMsg = err instanceof Error ? err.message : 'Action failed.'
+        }
+
+        const message = ok
+          ? wf.workflow.finalReadback ?? finalMsg ?? 'Done.'
+          : finalMsg || 'I could not finish that.'
+        if (ok) lastReadbackRef.current = message
+        recordHistory({
+          transcript: wf.workflow.label,
+          readback: message,
+          success: ok,
+          timestamp: Date.now(),
+        })
+        const resultPrefix = ok ? '✓ ' : '✗ '
+        dispatch({
+          type: 'state',
+          state: ok ? 'EXECUTING' : 'ERROR',
+          message: resultPrefix + message,
+        })
+        void broadcastState(ok ? 'EXECUTING' : 'ERROR', resultPrefix + message)
+        await speakWithSettings(message)
+        await sleep(400)
 
         processingRef.current = false
         enterListening()
@@ -866,36 +992,11 @@ export default function App(): React.ReactElement {
     [broadcastState, enterListening, recordHistory, onSpeakBoundary],
   )
 
-  // Wire the settle helpers now that runCommand exists. Effect re-runs if
-  // runCommand identity changes; refs ensure recognizer callbacks always see
-  // the latest implementation without re-creating enterListening.
+  // Keep runCommandRef pointing at the latest runCommand. The recognizer's
+  // onFinal calls runCommandRef.current(...), avoiding a useCallback
+  // dependency cycle on enterListening.
   useEffect(() => {
-    flushPendingRef.current = (): void => {
-      const text = pendingCommandRef.current.trim()
-      const confidence = pendingConfidenceRef.current
-      pendingCommandRef.current = ''
-      pendingConfidenceRef.current = 0
-      if (settleTimerRef.current !== null) {
-        clearTimeout(settleTimerRef.current)
-        settleTimerRef.current = null
-      }
-      if (!text) return
-      wakeArmedUntil.current = 0
-      const cmd: VoiceCommand = { transcript: text, confidence, timestamp: Date.now() }
-      void runCommand(cmd)
-    }
-    scheduleSettleRef.current = (): void => {
-      if (settleTimerRef.current !== null) clearTimeout(settleTimerRef.current)
-      settleTimerRef.current = setTimeout(() => flushPendingRef.current(), SETTLE_MS)
-    }
-    cancelSettleRef.current = (): void => {
-      if (settleTimerRef.current !== null) {
-        clearTimeout(settleTimerRef.current)
-        settleTimerRef.current = null
-      }
-      pendingCommandRef.current = ''
-      pendingConfidenceRef.current = 0
-    }
+    runCommandRef.current = runCommand
   }, [runCommand])
 
   const onSettingsChange = useCallback((patch: Partial<VoiceSettings>): void => {
@@ -974,6 +1075,36 @@ export default function App(): React.ReactElement {
   )
 }
 
+// Sends an ACTION_EXECUTE message to the active tab's content script with a
+// retry loop. Used by workflows where the page is freshly navigated and the
+// target field may not be rendered on the first attempt.
+async function sendActionWithRetry(
+  action: import('../types/actions').BrowserAction,
+  attempts: number,
+  gapMs: number,
+): Promise<{ success: boolean; message: string }> {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+  if (tab?.id == null) return { success: false, message: 'No active tab.' }
+  let lastMessage = ''
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const res = await chrome.tabs.sendMessage(tab.id, {
+        type: MSG.ACTION_EXECUTE,
+        payload: action,
+      })
+      const success = res?.payload?.success === true
+      const message =
+        typeof res?.payload?.message === 'string' ? res.payload.message : ''
+      if (success) return { success: true, message }
+      lastMessage = message
+    } catch (err) {
+      lastMessage = err instanceof Error ? err.message : 'Action failed.'
+    }
+    if (i < attempts - 1) await sleep(gapMs)
+  }
+  return { success: false, message: lastMessage || 'Action failed.' }
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -1042,11 +1173,14 @@ async function getVoiceConfirmation(prompt: string, settings: VoiceSettings): Pr
     }
     const timer = setTimeout(() => finish(false), CONFIRMATION_TIMEOUT_MS)
     try {
-      startListening((cmd) => {
-        clearTimeout(timer)
-        const t = cmd.transcript.toLowerCase()
-        if (/^\s*(yes|yeah|yep|do it|confirm)\b/.test(t)) finish(true)
-        else finish(false)
+      startListening({
+        locale: settings.locale,
+        onFinal: (cmd) => {
+          clearTimeout(timer)
+          const t = cmd.transcript.toLowerCase()
+          if (/^\s*(yes|yeah|yep|do it|confirm)\b/.test(t)) finish(true)
+          else finish(false)
+        },
       })
     } catch {
       clearTimeout(timer)

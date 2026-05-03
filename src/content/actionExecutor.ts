@@ -96,6 +96,29 @@ function fillInput(
   }
   const el = pick(selector)
   if (!el) return missing(action, label)
+
+  // Contenteditable elements (e.g. Gmail's message body, rich-text editors)
+  // aren't <input>/<textarea>. Fill them via execCommand with an innerText
+  // fallback, plus an input event so the editor's listeners fire.
+  if (
+    el instanceof HTMLElement &&
+    el.isContentEditable &&
+    !(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement)
+  ) {
+    el.focus()
+    let inserted = false
+    try {
+      inserted = document.execCommand('insertText', false, value)
+    } catch {
+      inserted = false
+    }
+    if (!inserted) {
+      el.innerText = value
+    }
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+    return { success: true, action, message: `Filled ${label || 'that field'}.` }
+  }
+
   if (!(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement)) {
     return { success: false, action, message: `I could not fill ${label || 'that field'}.` }
   }
