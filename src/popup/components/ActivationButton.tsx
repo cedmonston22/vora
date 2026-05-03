@@ -1,5 +1,4 @@
-import React, { useEffect, useRef } from 'react'
-import { Mic, MicOff } from 'lucide-react'
+import React, { useEffect, useMemo, useRef } from 'react'
 
 type Props = {
   isActive: boolean
@@ -9,6 +8,15 @@ type Props = {
 export function ActivationButton({ isActive, onToggle }: Props): React.ReactElement {
   const btnRef = useRef<HTMLButtonElement>(null)
   const prevActive = useRef(isActive)
+
+  // Resolve the packaged logo URL once. chrome.runtime.getURL returns a
+  // chrome-extension:// URL that works in any extension surface.
+  const logoUrl = useMemo(() => {
+    if (typeof chrome !== 'undefined' && chrome.runtime?.getURL) {
+      return chrome.runtime.getURL('public/icon128.png')
+    }
+    return '/public/icon128.png'
+  }, [])
 
   // Trigger confirm-bounce animation when transitioning from inactive → active
   useEffect(() => {
@@ -29,28 +37,27 @@ export function ActivationButton({ isActive, onToggle }: Props): React.ReactElem
       aria-label={isActive ? 'Stop Vora' : 'Start Vora'}
       aria-pressed={isActive}
       className={[
-        // Base — 64×64 circle, min tap target satisfied
-        'relative flex h-16 w-16 items-center justify-center rounded-full',
-        'text-white transition-all duration-200',
-        // Focus ring — Vora 500, 2px solid, 2px offset
-        'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#7B2CBF]',
+        'relative z-10 flex h-20 w-20 items-center justify-center overflow-visible rounded-[22px]',
+        'transition-all duration-200',
+        'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#7B2CBF]',
         isActive
-          ? // Active — Vora 500 fill + listening pulse + glow ring
-            'bg-[#7B2CBF] shadow-[0_0_0_8px_rgba(155,93,229,0.22)] vora-mic-pulse'
-          : // Idle — Vora ink fill, subtle hover lift
-            'bg-[#1A0B2E] hover:bg-[#3C096C] hover:shadow-[0_0_0_6px_rgba(155,93,229,0.14)]',
+          ? 'shadow-[0_0_0_8px_rgba(155,93,229,0.22)] vora-mic-pulse'
+          : 'opacity-80 hover:opacity-100 hover:shadow-[0_0_0_6px_rgba(155,93,229,0.16)]',
       ].join(' ')}
     >
-      {isActive
-        ? <Mic className="h-7 w-7" aria-hidden />
-        : <MicOff className="h-7 w-7" aria-hidden />
-      }
+      <img
+        src={logoUrl}
+        alt=""
+        aria-hidden
+        draggable={false}
+        className="h-20 w-20 select-none rounded-[22px]"
+      />
 
       {/* Ping ring — only when active, respects reduced-motion via CSS */}
       {isActive && (
         <span
           aria-hidden
-          className="absolute inset-0 rounded-full bg-[#9B5DE5] opacity-20 motion-safe:animate-ping"
+          className="absolute inset-0 -z-10 rounded-[22px] bg-vora-400 opacity-20 motion-safe:animate-ping"
         />
       )}
     </button>

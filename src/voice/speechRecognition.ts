@@ -57,21 +57,34 @@ export function startListening(
   r.lang = 'en-US'
 
   r.onresult = (event) => {
-    for (let i = event.resultIndex; i < event.results.length; i++) {
+    // Build a cumulative live string from ALL results (final + interim) so
+    // the displayed transcript never drops earlier words when a segment
+    // finalizes mid-utterance.
+    let cumFinal = ''
+    let interim = ''
+    for (let i = 0; i < event.results.length; i++) {
       const item = event.results[i]
       if (!item) continue
+      const t = item[0].transcript.trim()
+      if (!t) continue
+      if (item.isFinal) cumFinal += (cumFinal ? ' ' : '') + t
+      else interim += (interim ? ' ' : '') + t
+    }
+    const live = [cumFinal, interim].filter(Boolean).join(' ').trim()
+    if (live) cbs.onPartial?.(live)
+
+    // Fire onFinal only for newly finalized segments (resultIndex onward).
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const item = event.results[i]
+      if (!item || !item.isFinal) continue
       const alt = item[0]
-      const transcript = alt.transcript.trim()
-      if (!transcript) continue
-      if (item.isFinal) {
-        cbs.onFinal({
-          transcript,
-          confidence: typeof alt.confidence === 'number' ? alt.confidence : 0,
-          timestamp: Date.now(),
-        })
-      } else {
-        cbs.onPartial?.(transcript)
-      }
+      const t = alt.transcript.trim()
+      if (!t) continue
+      cbs.onFinal({
+        transcript: t,
+        confidence: typeof alt.confidence === 'number' ? alt.confidence : 0,
+        timestamp: Date.now(),
+      })
     }
   }
 
