@@ -10,6 +10,13 @@ import {
 
 const DEFAULT_DURATION_MINUTES = 60
 
+export type CalendarQuickValues = {
+  title: string
+  date: string
+  time: string
+  duration?: string
+}
+
 function parseDurationMinutes(raw: string): number | null {
   const t = raw.toLowerCase().trim()
   if (/^(default|standard|normal|whatever)/.test(t)) return DEFAULT_DURATION_MINUTES
@@ -50,6 +57,57 @@ function buildEventUrl(values: Record<string, string>): string {
     dates: range,
   })
   return `https://calendar.google.com/calendar/render?${params.toString()}`
+}
+
+// Parse one-shot event commands, e.g.
+// "make an event from 3pm to 4pm on friday called team sync"
+// Returns fully normalized slot values or null when the phrase is incomplete.
+export function parseCalendarQuickValues(transcript: string): CalendarQuickValues | null {
+  const raw = transcript.trim()
+  if (!raw) return null
+
+  const normalized = raw.replace(/[?!]/g, ' ').replace(/\s+/g, ' ').trim()
+  const lower = normalized.toLowerCase()
+
+  const calledIdx = lower.lastIndexOf(' called ')
+  if (calledIdx < 0) return null
+  const title = normalized.slice(calledIdx + ' called '.length).trim()
+  if (!title) return null
+
+  const beforeTitle = normalized.slice(0, calledIdx).trim()
+  const beforeTitleLower = beforeTitle.toLowerCase()
+
+  const onIdx = beforeTitleLower.lastIndexOf(' on ')
+  if (onIdx < 0) return null
+  const dateRaw = beforeTitle.slice(onIdx + ' on '.length).trim()
+  const beforeDate = beforeTitle.slice(0, onIdx).trim()
+  if (!dateRaw || !beforeDate) return null
+
+  const rangeMatch = /\bfrom\s+(.+?)\s+to\s+(.+)$/i.exec(beforeDate)
+  if (!rangeMatch) return null
+  const startRaw = rangeMatch[1]?.trim() ?? ''
+  const endRaw = rangeMatch[2]?.trim() ?? ''
+  if (!startRaw || !endRaw) return null
+
+  const date = parseDate(dateRaw)
+  const start = parseTime(startRaw)
+  const end = parseTime(endRaw)
+  if (!date || !start || !end) return null
+
+  const startMinutes = start.hour * 60 + start.minute
+  const endMinutes = end.hour * 60 + end.minute
+  let duration = endMinutes - startMinutes
+  // "from 11 to 1" style phrasing often crosses noon; salvage when possible.
+  if (duration <= 0) duration += 12 * 60
+  if (duration <= 0 || duration > 12 * 60) return null
+
+  const cleanTitle = title.charAt(0).toUpperCase() + title.slice(1)
+  return {
+    title: cleanTitle,
+    date: JSON.stringify(date),
+    time: JSON.stringify(start),
+    duration: String(duration),
+  }
 }
 
 // The Calendar workflow uses URL prefill instead of progressive DOM filling
