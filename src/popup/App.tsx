@@ -65,6 +65,8 @@ export default function App(): React.ReactElement {
   })
   const history = useCommandHistory()
   const [sessionOn, setSessionOn] = useState(false)
+  const [alwaysOn, setAlwaysOn] = useState(false)
+  const alwaysOnRef = useRef(false)
   const [learnedAliases, setLearnedAliases] = useState<string[]>([])
   const learnedRef = useRef<string[]>([])
   const sessionActive = useRef(false)
@@ -194,10 +196,64 @@ export default function App(): React.ReactElement {
     [sendToTab],
   )
 
+  const speakWithCurrentSettings = useCallback((text: string): Promise<void> => {
+    const s = settingsRef.current
+    return speak(text, {
+      rate: s.rate,
+      volume: s.volume,
+      voiceName: s.voiceName || undefined,
+      locale: s.locale,
+    })
+  }, [])
+
+  const enterAlwaysOn = useCallback(async (): Promise<void> => {
+    if (alwaysOnRef.current) return
+    alwaysOnRef.current = true
+    setAlwaysOn(true)
+    processingRef.current = true
+    stopListening()
+    dispatch({
+      type: 'state',
+      state: 'LISTENING',
+      message: 'Always-on. Just speak. Say "Vora off" to stop.',
+    })
+    void broadcastState('LISTENING', 'Always-on. Just speak. Say "Vora off" to stop.')
+    await speakWithCurrentSettings('Always-on mode. Just speak.')
+    processingRef.current = false
+    enterListening()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [broadcastState, speakWithCurrentSettings])
+
+  const exitAlwaysOn = useCallback(async (): Promise<void> => {
+    if (!alwaysOnRef.current) return
+    alwaysOnRef.current = false
+    setAlwaysOn(false)
+    wakeArmedUntil.current = 0
+    processingRef.current = true
+    stopListening()
+    dispatch({
+      type: 'state',
+      state: 'IDLE',
+      message: 'Idle. Say "Vora" to activate, or "Vora on" for always-on.',
+    })
+    void broadcastState('IDLE', 'Idle. Say "Vora" to activate, or "Vora on" for always-on.')
+    await speakWithCurrentSettings('Always-on off. Say Vora before each command.')
+    processingRef.current = false
+    enterListening()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [broadcastState, speakWithCurrentSettings])
+
   const enterListening = useCallback((): void => {
     if (!sessionActive.current) return
     const armed = Date.now() < wakeArmedUntil.current
-    if (armed) {
+    if (alwaysOnRef.current) {
+      dispatch({
+        type: 'state',
+        state: 'LISTENING',
+        message: 'Always-on. Just speak. Say "Vora off" to stop.',
+      })
+      void broadcastState('LISTENING', 'Always-on. Just speak. Say "Vora off" to stop.')
+    } else if (armed) {
       // We're between hearing the wake word and capturing the command.
       // Stay visibly Active so the user knows Vora is engaged.
       dispatch({
@@ -210,7 +266,7 @@ export default function App(): React.ReactElement {
       dispatch({
         type: 'state',
         state: 'IDLE',
-        message: 'Idle. Say "Vora" to activate.',
+        message: 'Idle. Say "Vora" to activate, or "Vora on" for always-on.',
       })
       void broadcastState('IDLE')
     }
@@ -222,10 +278,12 @@ export default function App(): React.ReactElement {
           const stripped = stripWakeWord(text, learnedRef.current)
           const armed = Date.now() < wakeArmedUntil.current
           if (stripped === null) {
-            if (armed) {
-              // User is speaking the command; keep extending the window so
-              // long pauses or slow speech don't drop the utterance.
-              wakeArmedUntil.current = Date.now() + ARMED_WINDOW_MS
+            if (armed || alwaysOnRef.current) {
+              if (armed) {
+                // User is speaking the command; keep extending the window so
+                // long pauses or slow speech don't drop the utterance.
+                wakeArmedUntil.current = Date.now() + ARMED_WINDOW_MS
+              }
               dispatch({ type: 'state', state: 'LISTENING', message: `Active: “${text}”` })
               void broadcastState('LISTENING')
               void broadcastPartial(text)
@@ -251,7 +309,24 @@ export default function App(): React.ReactElement {
           const stripped = stripWakeWord(cmd.transcript, learnedRef.current)
           const armed = Date.now() < wakeArmedUntil.current
 
-          if (stripped === null && !armed) {
+          // Session toggle: "vora on" / "vora off" / "turn on" / "turn off".
+          // Detect on the wake-stripped command so it always wins, even in
+          // always-on mode (where we still want "vora off" to stop).
+          const toggle = stripped !== null ? parseSessionToggle(stripped) : null
+          if (toggle === 'on') {
+            wakeArmedUntil.current = 0
+            void broadcastPartial('')
+            void enterAlwaysOn()
+            return
+          }
+          if (toggle === 'off') {
+            wakeArmedUntil.current = 0
+            void broadcastPartial('')
+            void exitAlwaysOn()
+            return
+          }
+
+          if (stripped === null && !armed && !alwaysOnRef.current) {
             console.log('[vora] no wake word and not armed, ignoring:', cmd.transcript)
             captureCandidate(cmd.transcript)
             dispatch({
@@ -267,8 +342,8 @@ export default function App(): React.ReactElement {
             void broadcastPartial('')
             return
           }
-          // Either wake-word + command in one utterance, or armed mode picked
-          // up the command alone in this utterance.
+          // Either wake-word + command, armed mode, or always-on mode picked
+          // up the command in this utterance.
           const command = stripped !== null ? stripped : cmd.transcript.trim()
           wakeArmedUntil.current = 0
           const wakedCmd: VoiceCommand = { ...cmd, transcript: command }
@@ -313,6 +388,9 @@ export default function App(): React.ReactElement {
   const stopSession = useCallback((): void => {
     sessionActive.current = false
     setSessionOn(false)
+    alwaysOnRef.current = false
+    setAlwaysOn(false)
+    wakeArmedUntil.current = 0
     stopListening()
     cancelSpeech()
     dispatch({
@@ -553,7 +631,14 @@ export default function App(): React.ReactElement {
   return (
     <main className="flex min-h-[28rem] w-80 flex-col gap-3 bg-white p-4 text-slate-900">
       <header>
-        <h1 className="text-lg font-semibold">Vora</h1>
+        <div className="flex items-center gap-2">
+          <h1 className="text-lg font-semibold">Vora</h1>
+          {alwaysOn && (
+            <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-emerald-700">
+              Always-on
+            </span>
+          )}
+        </div>
         <p className="text-xs text-slate-500">Voice control for any website.</p>
       </header>
 
@@ -599,6 +684,14 @@ export default function App(): React.ReactElement {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function parseSessionToggle(stripped: string): 'on' | 'off' | null {
+  const t = stripped.toLowerCase().replace(/[.,!?]+$/, '').trim()
+  if (t === 'on' || t === 'turn on' || t === 'always on' || t === 'stay on') return 'on'
+  if (t === 'off' || t === 'turn off' || t === 'always off' || t === 'stop' || t === 'stay off')
+    return 'off'
+  return null
 }
 
 function describeAction(action: import('../types/actions').BrowserAction): string {
